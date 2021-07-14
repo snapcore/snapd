@@ -30,6 +30,7 @@ import (
 
 	"github.com/snapcore/snapd/dirs"
 	"github.com/snapcore/snapd/sandbox/apparmor"
+	"github.com/snapcore/snapd/snapdtool"
 	"github.com/snapcore/snapd/testutil"
 )
 
@@ -40,6 +41,37 @@ func TestApparmor(t *testing.T) {
 type apparmorSuite struct{}
 
 var _ = Suite(&apparmorSuite{})
+
+func (*apparmorSuite) TestAppArmorFindAppArmorParser(c *C) {
+	mockParserCmd := testutil.MockCommand(c, "apparmor_parser", "")
+	defer mockParserCmd.Restore()
+	restore := apparmor.MockParserSearchPath(mockParserCmd.BinDir())
+	defer restore()
+
+	path, internal, err := apparmor.FindAppArmorParser()
+	c.Check(path, Equals, mockParserCmd.Exe())
+	c.Check(internal, Equals, false)
+	c.Check(err, Equals, nil)
+}
+
+func (*apparmorSuite) TestAppArmorFindInternalAppArmorParser(c *C) {
+	fakeroot := c.MkDir()
+	dirs.SetRootDir(fakeroot)
+	d := filepath.Join(dirs.SnapMountDir, "/snapd/42", "/usr/lib/snapd")
+	c.Assert(os.MkdirAll(d, 0755), IsNil)
+	p := filepath.Join(d, "apparmor_parser")
+	c.Assert(ioutil.WriteFile(p, nil, 0755), IsNil)
+	restore := snapdtool.MockOsReadlink(func(path string) (string, error) {
+		c.Assert(path, Equals, "/proc/self/exe")
+		return filepath.Join(d, "snapd"), nil
+	})
+	defer restore()
+
+	path, internal, err := apparmor.FindAppArmorParser()
+	c.Check(err, IsNil)
+	c.Check(internal, Equals, true)
+	c.Check(path, Equals, p)
+}
 
 func (*apparmorSuite) TestAppArmorLevelTypeStringer(c *C) {
 	c.Check(apparmor.Unknown.String(), Equals, "unknown")
