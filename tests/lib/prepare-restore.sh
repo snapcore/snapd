@@ -675,6 +675,8 @@ restore_suite_each() {
         "$TESTSTOOLS"/cleanup-state pre-invariant
     fi
     tests.invariant check
+
+    "$TESTSTOOLS"/fs-state check-monitor    
 }
 
 restore_suite() {
