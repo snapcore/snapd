@@ -1,0 +1,11 @@
+summary: Test for the mount-control interface
+
+execute: |
+    echo "Installing the test snap"
+
+    SNAP_NAME="test-snapd-mount-control"
+
+    "$TESTSTOOLS"/snaps-state install-local "${SNAP_NAME}" --devmode
+
+    echo "Connecting the mount-control interface"
+    snap connect "${SNAP_NAME}":mntctl
