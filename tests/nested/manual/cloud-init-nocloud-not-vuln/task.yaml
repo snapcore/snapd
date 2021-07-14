@@ -103,12 +103,8 @@ execute: |
     tests.nested exec "cloud-init status --wait"
 
     echo "Waiting for snapd to react to cloud-init"
-    for i in $(seq 60); do
-        if tests.nested exec "journalctl --no-pager -u snapd" | MATCH "Cloud-init reported"; then
-            break
-        fi
-        sleep 1
-    done
+    # It is needed || true because in ubuntu-core-16 there is not any cloud-init message in the journal log
+    tests.nested exec "retry --wait 1 -n 60 sh -c 'sudo journalctl --no-pager -u snapd | MATCH \"cloud-init reported\"'" || true
 
     # ensure that snapd restricted cloud-init with the zzzz_snapd.cfg file
     echo "Ensuring that snapd restricted cloud-init"
