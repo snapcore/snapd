@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	. "gopkg.in/check.v1"
@@ -37,6 +38,7 @@ import (
 	"github.com/snapcore/snapd/boot"
 	"github.com/snapcore/snapd/gadget"
 	"github.com/snapcore/snapd/gadget/quantity"
+	"github.com/snapcore/snapd/logger"
 	"github.com/snapcore/snapd/overlord/assertstate"
 	"github.com/snapcore/snapd/overlord/assertstate/assertstatetest"
 	"github.com/snapcore/snapd/overlord/auth"
@@ -136,8 +138,6 @@ func (s *deviceMgrRemodelSuite) TestRemodelUnhappy(c *C) {
 		Serial: "orig-serial",
 	})
 
-	restore := devicestate.AllowUC20RemodelTesting(false)
-	defer restore()
 	// ensure all error cases are checked
 	for _, t := range []struct {
 		new    map[string]interface{}
@@ -145,22 +145,6 @@ func (s *deviceMgrRemodelSuite) TestRemodelUnhappy(c *C) {
 	}{
 		{map[string]interface{}{"architecture": "pdp-7"}, "cannot remodel to different architectures yet"},
 		{map[string]interface{}{"base": "core18"}, "cannot remodel from core to bases yet"},
-		{map[string]interface{}{"base": "core20", "kernel": nil, "gadget": nil, "snaps": mockCore20ModelSnaps}, "cannot remodel to Ubuntu Core 20 models yet"},
-	} {
-		mergeMockModelHeaders(cur, t.new)
-		new := s.brands.Model(t.new["brand"].(string), t.new["model"].(string), t.new)
-		chg, err := devicestate.Remodel(s.state, new)
-		c.Check(chg, IsNil)
-		c.Check(err, ErrorMatches, t.errStr)
-	}
-
-	restore = devicestate.AllowUC20RemodelTesting(true)
-	defer restore()
-
-	for _, t := range []struct {
-		new    map[string]interface{}
-		errStr string
-	}{
 		// pre-UC20 to UC20
 		{map[string]interface{}{"base": "core20", "kernel": nil, "gadget": nil, "snaps": mockCore20ModelSnaps}, "cannot remodel from grade unset to grade signed"},
 	} {
@@ -170,16 +154,12 @@ func (s *deviceMgrRemodelSuite) TestRemodelUnhappy(c *C) {
 		c.Check(chg, IsNil)
 		c.Check(err, ErrorMatches, t.errStr)
 	}
-
 }
 
 func (s *deviceMgrRemodelSuite) TestRemodelCheckGrade(c *C) {
 	s.state.Lock()
 	defer s.state.Unlock()
 	s.state.Set("seeded", true)
-
-	restore := devicestate.AllowUC20RemodelTesting(true)
-	defer restore()
 
 	// set a model assertion
 	cur := mockCore20ModelHeaders
@@ -1677,9 +1657,6 @@ func (s *deviceMgrRemodelSuite) TestRemodelUC20RequiredSnapsAndRecoverySystem(c 
 	restore = devicestate.MockTimeNow(func() time.Time { return now })
 	defer restore()
 
-	restore = devicestate.AllowUC20RemodelTesting(true)
-	defer restore()
-
 	// set a model assertion
 	s.makeModelAssertionInState(c, "canonical", "pc-model", map[string]interface{}{
 		"architecture": "amd64",
@@ -1843,15 +1820,12 @@ type remodelUC20LabelConflictsTestCase struct {
 }
 
 func (s *deviceMgrRemodelSuite) testRemodelUC20LabelConflicts(c *C, tc remodelUC20LabelConflictsTestCase) {
-	restore := devicestate.AllowUC20RemodelTesting(true)
-	defer restore()
-
 	s.state.Lock()
 	defer s.state.Unlock()
 	s.state.Set("seeded", true)
 	s.state.Set("refresh-privacy-key", "some-privacy-key")
 
-	restore = devicestate.MockSnapstateInstallWithDeviceContext(func(ctx context.Context, st *state.State, name string, opts *snapstate.RevisionOptions, userID int, flags snapstate.Flags, deviceCtx snapstate.DeviceContext, fromChange string) (*state.TaskSet, error) {
+	restore := devicestate.MockSnapstateInstallWithDeviceContext(func(ctx context.Context, st *state.State, name string, opts *snapstate.RevisionOptions, userID int, flags snapstate.Flags, deviceCtx snapstate.DeviceContext, fromChange string) (*state.TaskSet, error) {
 		return nil, fmt.Errorf("unexpected call")
 	})
 	defer restore()
@@ -1973,5 +1947,169 @@ func (s *deviceMgrRemodelSuite) TestRemodelUC20LabelConflictsError(c *C) {
 
 		breakPermissions: true,
 		expectedErr:      fmt.Sprintf(`cannot select non-conflicting label for recovery system "%[1]s": stat .*/run/mnt/ubuntu-seed/systems/%[1]s: permission denied`, nowLabel),
+	})
+}
+
+type uc20RemodelSetModelTestCase struct {
+	// errors on consecutive reseals
+	resealErr    []error
+	taskLogMatch string
+	logMatch     string
+}
+
+func (s *deviceMgrRemodelSuite) testUC20RemodelSetModel(c *C, tc uc20RemodelSetModelTestCase) {
+	s.state.Lock()
+	defer s.state.Unlock()
+	s.state.Set("seeded", true)
+	s.state.Set("refresh-privacy-key", "some-privacy-key")
+
+	devicestate.SetBootOkRan(s.mgr, true)
+
+	c.Assert(os.MkdirAll(filepath.Join(boot.InitramfsUbuntuBootDir, "device"), 0755), IsNil)
+
+	nopHandler := func(task *state.Task, _ *tomb.Tomb) error {
+		return nil
+	}
+	s.o.TaskRunner().AddHandler("fake-download", nopHandler, nil)
+	s.o.TaskRunner().AddHandler("validate-snap", nopHandler, nil)
+	s.o.TaskRunner().AddHandler("fake-install", nopHandler, nil)
+	// create recovery system requests are boot, which is not done here
+	s.o.TaskRunner().AddHandler("create-recovery-system", nopHandler, nil)
+	s.o.TaskRunner().AddHandler("finalize-recovery-system", nopHandler, nil)
+
+	// set a model assertion we remodel from
+	model := s.makeModelAssertionInState(c, "canonical", "pc-model", map[string]interface{}{
+		"architecture": "amd64",
+		"base":         "core20",
+		"grade":        "dangerous",
+		"snaps": []interface{}{
+			map[string]interface{}{
+				"name":            "pc-kernel",
+				"id":              snaptest.AssertedSnapID("pc-kernel"),
+				"type":            "kernel",
+				"default-channel": "20",
+			},
+			map[string]interface{}{
+				"name":            "pc",
+				"id":              snaptest.AssertedSnapID("pc"),
+				"type":            "gadget",
+				"default-channel": "20",
+			},
+		},
+	})
+	s.makeSerialAssertionInState(c, "canonical", "pc-model", "serial")
+	devicestatetest.SetDevice(s.state, &auth.DeviceState{
+		Brand:  "canonical",
+		Model:  "pc-model",
+		Serial: "serial",
+	})
+
+	// the target model
+	new := s.brands.Model("canonical", "pc-model", map[string]interface{}{
+		"architecture": "amd64",
+		"base":         "core20",
+		"grade":        "dangerous",
+		"revision":     "1",
+		"snaps": []interface{}{
+			map[string]interface{}{
+				"name":            "pc-kernel",
+				"id":              snaptest.AssertedSnapID("pc-kernel"),
+				"type":            "kernel",
+				"default-channel": "20",
+			},
+			map[string]interface{}{
+				"name":            "pc",
+				"id":              snaptest.AssertedSnapID("pc"),
+				"type":            "gadget",
+				"default-channel": "20",
+			},
+		},
+	})
+
+	restore := devicestate.MockSnapstateInstallWithDeviceContext(func(ctx context.Context, st *state.State, name string, opts *snapstate.RevisionOptions, userID int, flags snapstate.Flags, deviceCtx snapstate.DeviceContext, fromChange string) (*state.TaskSet, error) {
+		tDownload := s.state.NewTask("fake-download", fmt.Sprintf("Download %s", name))
+		tValidate := s.state.NewTask("validate-snap", fmt.Sprintf("Validate %s", name))
+		tValidate.WaitFor(tDownload)
+		tInstall := s.state.NewTask("fake-install", fmt.Sprintf("Install %s", name))
+		tInstall.WaitFor(tValidate)
+		ts := state.NewTaskSet(tDownload, tValidate, tInstall)
+		ts.MarkEdge(tValidate, snapstate.DownloadAndChecksDoneEdge)
+		return ts, nil
+	})
+	defer restore()
+	restore = release.MockOnClassic(false)
+	defer restore()
+
+	buf, restore := logger.MockLogger()
+	defer restore()
+
+	m := boot.Modeenv{
+		Mode: "run",
+
+		Model:          model.Model(),
+		BrandID:        model.BrandID(),
+		Grade:          string(model.Grade()),
+		ModelSignKeyID: model.SignKeyID(),
+	}
+	c.Assert(m.WriteTo(""), IsNil)
+
+	resealKeyCalls := 0
+	restore = boot.MockResealKeyToModeenv(func(rootdir string, modeenv *boot.Modeenv, expectReseal bool) error {
+		resealKeyCalls++
+		c.Assert(len(tc.resealErr) >= resealKeyCalls, Equals, true)
+		return tc.resealErr[resealKeyCalls-1]
+	})
+	defer restore()
+
+	expectedLabel := time.Now().Format("20060102")
+	s.state.Set("tried-systems", []string{expectedLabel})
+
+	chg, err := devicestate.Remodel(s.state, new)
+	c.Assert(err, IsNil)
+	var setModelTask *state.Task
+	for _, tsk := range chg.Tasks() {
+		if tsk.Kind() == "set-model" {
+			setModelTask = tsk
+			break
+		}
+	}
+	s.state.Unlock()
+
+	s.settle(c)
+
+	s.state.Lock()
+	c.Check(chg.IsReady(), Equals, true)
+	c.Check(chg.Err(), IsNil)
+	c.Check(resealKeyCalls, Equals, len(tc.resealErr))
+	// even if errors occur during reseal, set-model is a point of no return
+	c.Check(setModelTask.Status(), Equals, state.DoneStatus)
+	// however, error is still logged, both to the task and the logger
+	if tc.resealErr == nil {
+		c.Check(setModelTask.Log(), Equals, "")
+	} else {
+		c.Check(strings.Join(setModelTask.Log(), "\n"), Matches, tc.taskLogMatch)
+		c.Check(buf.String(), Matches, tc.logMatch)
+	}
+}
+
+func (s *deviceMgrRemodelSuite) TestUC20RemodelSetModelHappy(c *C) {
+	s.testUC20RemodelSetModel(c, uc20RemodelSetModelTestCase{
+		resealErr: []error{
+			nil, // promote recovery system
+			nil, // device change pre model write
+			nil, // device change post model write
+		},
+	})
+}
+
+func (s *deviceMgrRemodelSuite) TestUC20RemodelSetModelErr(c *C) {
+	s.testUC20RemodelSetModel(c, uc20RemodelSetModelTestCase{
+		resealErr: []error{
+			nil, // promote tried recovery system
+			// keep this comment so that gofmt does not complain
+			fmt.Errorf("mock reseal error"), // device change pre model write
+		},
+		taskLogMatch: `.* cannot complete remodel: \[cannot switch device: mock reseal error\]`,
+		logMatch:     `(?s).* cannot complete remodel: \[cannot switch device: mock reseal error\].`,
 	})
 }
