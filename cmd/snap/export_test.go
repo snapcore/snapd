@@ -39,6 +39,9 @@ import (
 var RunMain = run
 
 var (
+	MaybeExecAsCommandNotFound = maybeExecAsCommandNotFound
+	MaybeExecAsSnapBinSymlink  = maybeExecAsSnapBinSymlink
+
 	Client = mkClient
 
 	FirstNonOptionIsRun = firstNonOptionIsRun
