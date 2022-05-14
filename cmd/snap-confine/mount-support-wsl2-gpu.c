@@ -57,12 +57,8 @@ static void sc_mkdir_and_mount_and_bind_wsl_gpu(const char *rootfs_dir,
 	if (res != 0 && errno != EEXIST) {
 		die("cannot create directory %s", dst_dir);
 	}
-	if (res == 0 && (chown(dst_dir, 0, 0) < 0)) {
-		// Adjust the ownership only if we created the directory.
-		die("cannot change ownership of %s", dst_dir);
-	}
 	(void)sc_set_effective_identity(old);
-	// Bind mount the binary WSL2 GPU driver into $tgt_dir (i.e. /var/lib/snapd/lib/gl).
+	// Bind mount the binary WSL2 GPU driver into $dst_dir (i.e. /var/lib/snapd/lib/wsl).
 	debug("bind mounting WSL2 GPU driver %s -> %s", src_dir, dst_dir);
 	if (mount(src_dir, dst_dir, NULL, MS_BIND, NULL) != 0) {
 		die("cannot bind mount WSL2 GPU driver %s -> %s", src_dir, dst_dir);
@@ -77,13 +73,9 @@ void sc_mount_wsl2_gpu_driver(const char *rootfs_dir)
 	}
 
 	sc_identity old = sc_set_effective_identity(sc_root_group_identity());
-	int res = mkdir(SC_LIB, 0755);
-	if (res != 0 && errno != EEXIST) {
+	int res = sc_nonfatal_mkpath(SC_LIB, 0755);
+	if (res != 0) {
 		die("cannot create " SC_LIB);
-	}
-	if (res == 0 && (chown(SC_LIB, 0, 0) < 0)) {
-		// Adjust the ownership only if we created the directory.
-		die("cannot change ownership of " SC_LIB);
 	}
 	(void)sc_set_effective_identity(old);
 	sc_mkdir_and_mount_and_bind_wsl_gpu(rootfs_dir, SC_HOST_WSL_DIR,
