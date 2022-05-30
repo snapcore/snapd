@@ -24,7 +24,7 @@
  *
  * This function is designed to be called before pivot_root() switched the root
  * filesystem.
- * 
+ *
  * On WSL2, the host GPU libraries and drivers are mounted to /usr/lib/wsl. This
  * directory is bind mounted to /var/lib/snapd/lib/wsl relative to the location of
  * the root filesystem directory provided as an argument.
