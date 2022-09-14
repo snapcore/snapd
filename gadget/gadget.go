@@ -61,6 +61,9 @@ const (
 	// extracted kernels for all uc systems
 	bootImage = "system-boot-image"
 
+	// extracted dtb overlay image for all uc systems
+	dtboImage = "system-dtbo-image"
+
 	// extracted kernels for recovery kernels for uc20 specifically
 	seedBootImage = "system-seed-image"
 
@@ -1027,7 +1030,7 @@ func validateRole(vs *VolumeStructure) error {
 		if vs.Filesystem != "" && vs.Filesystem != "none" {
 			return errors.New("mbr structures must not specify a file system")
 		}
-	case SystemBoot, bootImage, bootSelect, seedBootSelect, seedBootImage, "":
+	case SystemBoot, dtboImage, bootImage, bootSelect, seedBootSelect, seedBootImage, "":
 		// noop
 	case legacyBootImage, legacyBootSelect:
 		// noop

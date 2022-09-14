@@ -114,12 +114,21 @@ type SnapBootSelect_v2_recovery struct {
 	 */
 	Recovery_system_status [SNAP_FILE_NAME_MAX_LEN]byte
 
+	/**
+	 * Matrix mapping boot partition to the optional dtbo partition
+	 * This matrix is optional and if not populated dtbo is not extracted
+	 * If defined, dtbo image will be extracted to the partions based on used
+	 * bootimg partition
+	 * [ <bootimg 1 part label> ] [ <dtbo 1 part label> ]
+	 * [ <bootimg 2 part label> ] [ <dtbo 2 part label> ]
+	 */
+	Bootimg_to_dtboimg_matrix [SNAP_RUN_BOOTIMG_PART_NUM][2][SNAP_FILE_NAME_MAX_LEN]byte
+
+	/* name of the dtbo image from kernel snap to be used for extraction
+	when not defined or empty, default dtbo.img will be used */
+	Dtboimg_file_name [SNAP_FILE_NAME_MAX_LEN]byte
+
 	/* unused placeholders for additional parameters in the future */
-	Unused_key_01 [SNAP_FILE_NAME_MAX_LEN]byte
-	Unused_key_02 [SNAP_FILE_NAME_MAX_LEN]byte
-	Unused_key_03 [SNAP_FILE_NAME_MAX_LEN]byte
-	Unused_key_04 [SNAP_FILE_NAME_MAX_LEN]byte
-	Unused_key_05 [SNAP_FILE_NAME_MAX_LEN]byte
 	Unused_key_06 [SNAP_FILE_NAME_MAX_LEN]byte
 	Unused_key_07 [SNAP_FILE_NAME_MAX_LEN]byte
 	Unused_key_08 [SNAP_FILE_NAME_MAX_LEN]byte
@@ -160,6 +169,8 @@ func (v2recovery *SnapBootSelect_v2_recovery) get(key string) string {
 		return cToGoString(v2recovery.Snapd_recovery_system[:])
 	case "bootimg_file_name":
 		return cToGoString(v2recovery.Bootimg_file_name[:])
+	case "dtboimg_file_name":
+		return cToGoString(v2recovery.Dtboimg_file_name[:])
 	case "try_recovery_system":
 		return cToGoString(v2recovery.Try_recovery_system[:])
 	case "recovery_system_status":
@@ -176,6 +187,8 @@ func (v2recovery *SnapBootSelect_v2_recovery) set(key, value string) {
 		copyString(v2recovery.Snapd_recovery_system[:], value)
 	case "bootimg_file_name":
 		copyString(v2recovery.Bootimg_file_name[:], value)
+	case "dtboimg_file_name":
+		copyString(v2recovery.Dtboimg_file_name[:], value)
 	case "try_recovery_system":
 		copyString(v2recovery.Try_recovery_system[:], value)
 	case "recovery_system_status":
@@ -185,6 +198,10 @@ func (v2recovery *SnapBootSelect_v2_recovery) set(key, value string) {
 
 func (v2recovery *SnapBootSelect_v2_recovery) bootImgRecoverySystemMatrix() (bootimgMatrixGeneric, error) {
 	return (bootimgMatrixGeneric)((&v2recovery.Bootimg_matrix)[:]), nil
+}
+
+func (v2recovery *SnapBootSelect_v2_recovery) dtboImgKernelMatrix() (bootimgMatrixGeneric, error) {
+	return (bootimgMatrixGeneric)((&v2recovery.Bootimg_to_dtboimg_matrix)[:]), nil
 }
 
 func (v2recovery *SnapBootSelect_v2_recovery) bootImgKernelMatrix() (bootimgMatrixGeneric, error) {
@@ -269,12 +286,21 @@ type SnapBootSelect_v2_run struct {
 	 */
 	Gadget_asset_matrix [SNAP_RUN_BOOTIMG_PART_NUM][2][SNAP_FILE_NAME_MAX_LEN]byte
 
+	/**
+	 * Matrix mapping boot partition to the optional dtbo partition
+	 * This matrix is optional and if not populated dtbo is not extracted
+	 * If defined, dtbo image will be extracted to the partions based on used
+	 * bootimg partition
+	 * [ <bootimg 1 part label> ] [ <dtbo 1 part label> ]
+	 * [ <bootimg 2 part label> ] [ <dtbo 2 part label> ]
+	 */
+	Bootimg_to_dtboimg_matrix [SNAP_RUN_BOOTIMG_PART_NUM][2][SNAP_FILE_NAME_MAX_LEN]byte
+
+	/* name of the dtbo image from kernel snap to be used for extraction
+	when not defined or empty, default dtbo.img will be used */
+	Dtboimg_file_name [SNAP_FILE_NAME_MAX_LEN]byte
+
 	/* unused placeholders for additional parameters in the future */
-	Unused_key_01 [SNAP_FILE_NAME_MAX_LEN]byte
-	Unused_key_02 [SNAP_FILE_NAME_MAX_LEN]byte
-	Unused_key_03 [SNAP_FILE_NAME_MAX_LEN]byte
-	Unused_key_04 [SNAP_FILE_NAME_MAX_LEN]byte
-	Unused_key_05 [SNAP_FILE_NAME_MAX_LEN]byte
 	Unused_key_06 [SNAP_FILE_NAME_MAX_LEN]byte
 	Unused_key_07 [SNAP_FILE_NAME_MAX_LEN]byte
 	Unused_key_08 [SNAP_FILE_NAME_MAX_LEN]byte
@@ -323,6 +349,8 @@ func (v2run *SnapBootSelect_v2_run) get(key string) string {
 		return cToGoString(v2run.Snap_try_gadget[:])
 	case "bootimg_file_name":
 		return cToGoString(v2run.Bootimg_file_name[:])
+	case "dtboimg_file_name":
+		return cToGoString(v2run.Dtboimg_file_name[:])
 	}
 	return ""
 }
@@ -341,11 +369,17 @@ func (v2run *SnapBootSelect_v2_run) set(key, value string) {
 		copyString(v2run.Snap_try_gadget[:], value)
 	case "bootimg_file_name":
 		copyString(v2run.Bootimg_file_name[:], value)
+	case "dtboimg_file_name":
+		copyString(v2run.Dtboimg_file_name[:], value)
 	}
 }
 
 func (v2run *SnapBootSelect_v2_run) bootImgKernelMatrix() (bootimgMatrixGeneric, error) {
 	return (bootimgMatrixGeneric)((&v2run.Bootimg_matrix)[:]), nil
+}
+
+func (v2run *SnapBootSelect_v2_run) dtboImgKernelMatrix() (bootimgMatrixGeneric, error) {
+	return (bootimgMatrixGeneric)((&v2run.Bootimg_to_dtboimg_matrix)[:]), nil
 }
 
 func (v2run *SnapBootSelect_v2_run) bootImgRecoverySystemMatrix() (bootimgMatrixGeneric, error) {
