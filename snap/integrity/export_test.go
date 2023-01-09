@@ -20,8 +20,7 @@
 package integrity
 
 var (
-	Align        = align
-	BlockSize    = blockSize
-	Magic        = magic
-	CreateHeader = createHeader
+	Align     = align
+	BlockSize = blockSize
+	Magic     = magic
 )

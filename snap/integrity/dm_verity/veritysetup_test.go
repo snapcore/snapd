@@ -20,11 +20,14 @@
 package dm_verity_test
 
 import (
+	"fmt"
+	"os/exec"
 	"testing"
 
 	. "gopkg.in/check.v1"
 
 	"github.com/snapcore/snapd/snap/integrity/dm_verity"
+	"github.com/snapcore/snapd/snap/snaptest"
 	"github.com/snapcore/snapd/testutil"
 )
 
@@ -32,24 +35,30 @@ func Test(t *testing.T) { TestingT(t) }
 
 type VerityTestSuite struct {
 	testutil.BaseTest
+
+	veritysetup *testutil.MockCmd
 }
 
 var _ = Suite(&VerityTestSuite{})
 
 func (s *VerityTestSuite) SetUpTest(c *C) {
 	s.BaseTest.SetUpTest(c)
+
+	veritysetupWrapper := `exec %[1]s "$@" </dev/stdin`
+
+	veritysetup, err := exec.LookPath("veritysetup")
+	c.Assert(err, IsNil)
+
+	s.veritysetup = testutil.MockCommand(c, "veritysetup", fmt.Sprintf(veritysetupWrapper, veritysetup))
+	s.AddCleanup(s.veritysetup.Restore)
+
 }
 
 func (s *VerityTestSuite) TearDownTest(c *C) {
 	s.BaseTest.TearDownTest(c)
 }
 
-func (s *VerityTestSuite) TestNewVeritySuperBlock(c *C) {
-	sb := dm_verity.NewVeritySuperBlock()
-	c.Check(sb.Version, Equals, uint64(0x1))
-}
-
-func (s *VerityTestSuite) TestParseVeritySetupOutput(c *C) {
+func (s *VerityTestSuite) TestGetRootHashFromOutput(c *C) {
 	const testinput = `
 VERITY header information for my-snap-name_0.1_all.snap.veritynosb
 UUID:
@@ -63,41 +72,45 @@ Salt:            	595c3d19c4d8d56727332eba16ef6900faeb4fde0c6625fefcd178b8dfdff4
 Root hash:      	cf9a379613c0dc10301fe3eba4665c38b849b7aad311471faa4d2392ee4ede49
 Hash device size: 	4096 [bytes]
 `
-	testsb := dm_verity.NewVeritySuperBlock()
-	testsb.UUID = ""
-	testsb.HashType = 1
-	testsb.DataBlocks = 7
-	testsb.DataBlockSize = 4096
-	testsb.HashBlockSize = 4096
-	testsb.Algorithm = "sha256"
-	testsb.Salt = "595c3d19c4d8d56727332eba16ef6900faeb4fde0c6625fefcd178b8dfdff48a"
-
 	testroothash := "cf9a379613c0dc10301fe3eba4665c38b849b7aad311471faa4d2392ee4ede49"
 
-	parseVeritySetupOutput := dm_verity.ParseVeritySetupOutput
-	roothash, sb := parseVeritySetupOutput([]byte(testinput))
-	c.Check(sb, DeepEquals, &testsb)
+	roothash, err := dm_verity.GetRootHashFromOutput([]byte(testinput))
+	c.Assert(err, IsNil)
 	c.Check(roothash, Equals, testroothash)
 }
 
-func (s *VerityTestSuite) TestFormatNoSBSuccess(c *C) {
-	dataDevice := "test.snap"
-	hashDevice := "test.snap.verity"
-	veritysetupformat := testutil.MockCommand(c, "veritysetup", "exit 0")
-	defer veritysetupformat.Restore()
+func (s *VerityTestSuite) TestGetRootHashFromOutputNoRootHash(c *C) {
+	const testinput = `
+VERITY header information for my-snap-name_0.1_all.snap.veritynosb
+UUID:
+Hash type:       	1
+Data blocks:     	7
+Data block size: 	4096
+Hash blocks:     	1
+Hash block size: 	4096
+Hash algorithm:  	sha256
+Salt:            	595c3d19c4d8d56727332eba16ef6900faeb4fde0c6625fefcd178b8dfdff48a
+Hash device size: 	4096 [bytes]
+`
 
-	_, _, err := dm_verity.FormatNoSB(dataDevice, hashDevice)
-	c.Assert(err, IsNil)
-	c.Check(veritysetupformat.Calls(), HasLen, 1)
+	_, err := dm_verity.GetRootHashFromOutput([]byte(testinput))
+	c.Check(err, ErrorMatches, `empty root hash`)
 }
 
-func (s *VerityTestSuite) TestFormatNoSBFail(c *C) {
-	dataDevice := "test.snap"
-	hashDevice := "test.snap.verity"
-	veritysetupformat := testutil.MockCommand(c, "veritysetup", "exit 1")
-	defer veritysetupformat.Restore()
+func (s *VerityTestSuite) TestFormatSuccess(c *C) {
+	snapPath, _ := snaptest.MakeTestSnapInfoWithFiles(c, "name: foo\nversion: 1.0", nil, nil)
 
-	_, _, err := dm_verity.FormatNoSB(dataDevice, hashDevice)
-	c.Check(veritysetupformat.Calls(), HasLen, 1)
-	c.Check(err, ErrorMatches, "exit status 1")
+	_, err := dm_verity.Format(snapPath, snapPath+".verity")
+	c.Assert(err, IsNil)
+	c.Check(s.veritysetup.Calls(), HasLen, 1)
+
+	// [1:] to ignore Exe() which is the tmp path for cryptsetup from the mocking
+	c.Check(s.veritysetup.Calls()[1:], DeepEquals, [][]string{{s.veritysetup.Exe(), "format", snapPath, snapPath + ".verity"}}[1:])
+}
+
+func (s *VerityTestSuite) TestFormatFail(c *C) {
+	snapPath, _ := snaptest.MakeTestSnapInfoWithFiles(c, "name: foo\nversion: 1.0", nil, nil)
+
+	_, err := dm_verity.Format(snapPath, "")
+	c.Check(err, ErrorMatches, "Cannot create hash image  for writing.")
 }

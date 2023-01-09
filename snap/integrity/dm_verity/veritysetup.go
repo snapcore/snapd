@@ -20,81 +20,57 @@
 package dm_verity
 
 import (
+	"fmt"
 	"os/exec"
-	"strconv"
 	"strings"
 
 	"github.com/snapcore/snapd/logger"
 	"github.com/snapcore/snapd/osutil"
 )
 
-type VeritySuperBlock struct {
-	Version       uint64 `json:"version"`
-	HashType      uint64 `json:"hash_type"`
-	UUID          string `json:"uuid"`
-	Algorithm     string `json:"algorithm"`
-	DataBlockSize uint64 `json:"data_block_size"`
-	HashBlockSize uint64 `json:"hash_block_size"`
-	DataBlocks    uint64 `json:"data_blocks"`
-	SaltSize      string `json:"salt_size"`
-	Salt          string `json:"salt"`
+type DmVerityBlock struct {
+	RootHash string `json:"root-hash"`
 }
 
-func NewVeritySuperBlock() VeritySuperBlock {
-	sb := VeritySuperBlock{}
-	sb.Version = 1
-	return sb
+func NewDmVerityBlock(rootHash string) *DmVerityBlock {
+	dmVerityBlock := DmVerityBlock{}
+	dmVerityBlock.RootHash = rootHash
+	return &dmVerityBlock
 }
 
-func parseVeritySetupOutput(output []byte) (string, *VeritySuperBlock) {
-	sb := NewVeritySuperBlock()
+func getRootHashFromOutput(output []byte) (string, error) {
 	rootHash := ""
 
 	for _, line := range strings.Split(string(output), "\n") {
-		cols := strings.Split(line, ":")
-		if len(cols) != 2 {
-			continue
-		}
-
-		key := strings.TrimSpace(cols[0])
-		val := strings.TrimSpace(cols[1])
-		switch key {
-		case "UUID":
-			sb.UUID = val
-		case "Hash type":
-			sb.HashType, _ = strconv.ParseUint(val, 10, 64)
-		case "Data blocks":
-			sb.DataBlocks, _ = strconv.ParseUint(val, 10, 64)
-		case "Data block size":
-			sb.DataBlockSize, _ = strconv.ParseUint(val, 10, 64)
-		case "Hash block size":
-			sb.HashBlockSize, _ = strconv.ParseUint(val, 10, 64)
-		case "Hash algorithm":
-			sb.Algorithm = val
-		case "Salt":
-			sb.Salt = val
-		case "Root hash":
-			rootHash = val
+		if strings.HasPrefix(line, "Root hash") {
+			val := strings.SplitN(line, ":", 2)[1]
+			rootHash = strings.TrimSpace(val)
 		}
 	}
 
-	return rootHash, &sb
+	if len(rootHash) == 0 {
+		return "", fmt.Errorf("empty root hash")
+	}
+
+	return rootHash, nil
 
 }
 
-// Returns superblock information for inclusion in the integrity header instead
-// of storing it in the beginning of the hash device
-func FormatNoSB(dataDevice string, hashDevice string) (string, *VeritySuperBlock, error) {
-	cmd := exec.Command("veritysetup", "format", "--no-superblock", dataDevice, hashDevice)
+// Runs veritysetup format and returns a DmVerityBlock which include the rootHash
+func Format(dataDevice string, hashDevice string) (*DmVerityBlock, error) {
+	cmd := exec.Command("veritysetup", "format", dataDevice, hashDevice)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", nil, osutil.OutputErr(output, err)
+		return nil, osutil.OutputErr(output, err)
 	}
 
 	logger.Debugf("%s", string(output))
 
-	rootHash, sb := parseVeritySetupOutput(output)
+	rootHash, err := getRootHashFromOutput(output)
+	if err != nil {
+		return nil, err
+	}
 
-	return rootHash, sb, nil
+	return NewDmVerityBlock(rootHash), nil
 }
