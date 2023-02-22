@@ -1,0 +1,17 @@
+summary: Ensure that XDG_RUNTIME_DIR is created
+
+details: |
+    Ensure that the XDG_RUNTIME_DIR is created when a snap is launched.
+
+restore: |
+    snap remove --purge test-snapd-xdg-dir || true
+
+execute: |
+    echo Testing XDG_RUNTIME_DIR
+    snap install --edge test-snapd-xdg-dir
+    rm -f /run/user/0/snap.test-snapd-xdg-dir
+    test ! -e /run/user/0/snap.test-snapd-xdg-dir
+    #   xdgtest returns 255 if the folder doesn't exist,
+    #   making the task fail in that case.
+    snap run test-snapd-xdg-dir || echo "The XDG_RUNTIME_DIR folder doesn't exist inside the environment"
+    test -d /run/user/0/snap.test-snapd-xdg-dir
