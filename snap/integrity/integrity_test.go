@@ -169,3 +169,53 @@ func (s *IntegrityTestSuite) TestGenerateAndAppendSuccess(c *C) {
 	c.Check(integrityDataHeader.Size, Equals, uint64(2*4096))
 	c.Check(integrityDataHeader.DmVerityBlock.RootHash, HasLen, 64)
 }
+
+func (s *IntegrityTestSuite) TestFindIntegrityData(c *C) {
+	blockSize := uint64(integrity.BlockSize)
+
+	snapPath, _ := snaptest.MakeTestSnapInfoWithFiles(c, "name: foo\nversion: 1.0", nil, nil)
+
+	snapFileInfo, err := os.Stat(snapPath)
+	c.Assert(err, IsNil)
+	orig_size := snapFileInfo.Size()
+
+	err = integrity.GenerateAndAppend(snapPath)
+	c.Assert(err, IsNil)
+
+	snapFileInfo, err = os.Stat(snapPath)
+	c.Assert(err, IsNil)
+	size := snapFileInfo.Size()
+
+	integrityData, err := integrity.FindIntegrityData(snapPath)
+	c.Assert(err, IsNil)
+	c.Check(integrityData.SourceFilePath, Equals, snapPath)
+
+	snapFile, err := os.Open(snapPath)
+	c.Assert(err, IsNil)
+	defer snapFile.Close()
+
+	// Read header from file
+	header := make([]byte, blockSize-1)
+	_, err = snapFile.Seek(orig_size, io.SeekStart)
+	c.Assert(err, IsNil)
+
+	n, err := snapFile.Read(header)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int(blockSize)-1)
+
+	var integrityDataHeader integrity.IntegrityDataHeader
+	integrityDataHeader.Unserialize(header)
+	c.Check(*integrityData.Header, DeepEquals, integrityDataHeader)
+	c.Check(integrityData.Offset, Equals, blockSize)
+
+	// Read all hash data from file
+	data := make([]byte, size-orig_size)
+	_, err = snapFile.Seek(orig_size, io.SeekStart)
+	c.Assert(err, IsNil)
+
+	n, err = snapFile.Read(data)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int(size-orig_size))
+
+	c.Check(*integrityData.Bytes, DeepEquals, data)
+}
