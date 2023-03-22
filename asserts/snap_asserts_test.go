@@ -1002,6 +1002,25 @@ func (srs *snapRevSuite) makeValidEncoded() string {
 		"AXNpZw=="
 }
 
+func (srs *snapRevSuite) makeValidEncodedWithIntegrity() string {
+	return "type: snap-revision\n" +
+		"authority-id: store-id1\n" +
+		"snap-sha3-384: " + blobSHA3_384 + "\n" +
+		"snap-id: snap-id-1\n" +
+		"snap-size: 123\n" +
+		"snap-revision: 1\n" +
+		"integrity:\n" +
+		"  sha3-384: " + blobSHA3_384 + "\n" +
+		"  size: 128\n" +
+		"developer-id: dev-id1\n" +
+		"revision: 1\n" +
+		srs.tsLine +
+		"body-length: 0\n" +
+		"sign-key-sha3-384: Jv8_JiHiIzJVcO9M55pPdqSDWUvuhfDIBJUS-3VW7F_idjix7Ffn5qMxB21ZQuij" +
+		"\n\n" +
+		"AXNpZw=="
+}
+
 func makeSnapRevisionHeaders(overrides map[string]interface{}) map[string]interface{} {
 	headers := map[string]interface{}{
 		"authority-id":  "canonical",
@@ -1056,6 +1075,27 @@ func (srs *snapRevSuite) TestDecodeOKWithProvenance(c *C) {
 	c.Check(snapRev.DeveloperID(), Equals, "dev-id1")
 	c.Check(snapRev.Revision(), Equals, 1)
 	c.Check(snapRev.Provenance(), Equals, "foo")
+}
+
+func (srs *snapRevSuite) TestDecodeOKWithIntegrity(c *C) {
+	encoded := srs.makeValidEncodedWithIntegrity()
+	a, err := asserts.Decode([]byte(encoded))
+	c.Assert(err, IsNil)
+	c.Check(a.Type(), Equals, asserts.SnapRevisionType)
+	snapRev := a.(*asserts.SnapRevision)
+	c.Check(snapRev.AuthorityID(), Equals, "store-id1")
+	c.Check(snapRev.Timestamp(), Equals, srs.ts)
+	c.Check(snapRev.SnapID(), Equals, "snap-id-1")
+	c.Check(snapRev.SnapSHA3_384(), Equals, blobSHA3_384)
+	c.Check(snapRev.SnapSize(), Equals, uint64(123))
+	c.Check(snapRev.SnapRevision(), Equals, 1)
+	c.Check(snapRev.DeveloperID(), Equals, "dev-id1")
+	c.Check(snapRev.Revision(), Equals, 1)
+	c.Check(snapRev.Provenance(), Equals, "global-upload")
+	c.Check(snapRev.Integrity(), DeepEquals, map[string]interface{}{
+		"sha3-384": blobSHA3_384,
+		"size":     "128",
+	})
 }
 
 const (

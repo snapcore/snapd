@@ -567,6 +567,11 @@ func (snaprev *SnapRevision) DeveloperID() string {
 	return snaprev.HeaderString("developer-id")
 }
 
+// Integrity returns the integrity data embedded in the snap revision if any.
+func (snaprev *SnapRevision) Integrity() interface{} {
+	return snaprev.Header("integrity")
+}
+
 // Timestamp returns the time when the snap-revision was issued.
 func (snaprev *SnapRevision) Timestamp() time.Time {
 	return snaprev.timestamp
@@ -676,6 +681,23 @@ func assembleSnapRevision(assert assertionBase) (Assertion, error) {
 	timestamp, err := checkRFC3339Date(assert.headers, "timestamp")
 	if err != nil {
 		return nil, err
+	}
+
+	integrity, err := checkMap(assert.headers, "integrity")
+	if err != nil {
+		return nil, err
+	}
+
+	if integrity != nil {
+		_, err = checkDigest(integrity, "sha3-384", crypto.SHA3_384)
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = checkUint(integrity, "size", 64)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &SnapRevision{
