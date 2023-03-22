@@ -48,6 +48,7 @@ type initramfsMountsState struct {
 	recoverySystem string
 
 	verifiedModel gadget.Model
+	db            *asserts.Database
 }
 
 var errRunModeNoImpliedRecoverySystem = errors.New("internal error: no implied recovery system in run mode")
@@ -79,10 +80,12 @@ func (mst *initramfsMountsState) ReadEssential(recoverySystem string, essentialT
 	if runtimeNumCPU() > 1 {
 		jobs = 2
 	}
-	model, snaps, newTrustedEarliestTime, err := seed.ReadSystemEssentialAndBetterEarliestTime(boot.InitramfsUbuntuSeedDir, recoverySystem, essentialTypes, now, jobs, perf)
+	model, snaps, db, newTrustedEarliestTime, err := seed.ReadSystemEssentialAndBetterEarliestTime(boot.InitramfsUbuntuSeedDir, recoverySystem, essentialTypes, now, jobs, perf)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	mst.db = db
 
 	// set the time on the system to move forward if it is in the future - never
 	// move the time backwards
