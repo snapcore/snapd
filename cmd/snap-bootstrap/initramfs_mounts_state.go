@@ -28,6 +28,7 @@ import (
 
 	"github.com/snapcore/snapd/asserts"
 	"github.com/snapcore/snapd/boot"
+	"github.com/snapcore/snapd/dirs"
 	"github.com/snapcore/snapd/gadget"
 	"github.com/snapcore/snapd/logger"
 	"github.com/snapcore/snapd/osutil"
@@ -158,10 +159,28 @@ func (mst *initramfsMountsState) GetMountOptionsForSnap(snapInfo snap.PlaceInfo,
 		Private:  true,
 	}
 
+	if mst.db == nil {
+		return mountOptions, nil
+	}
+
 	err := generateVerityMountOptions(mountOptions, snapInfo, snapPath, mst.db)
 	if err != nil {
 		return nil, err
 	}
 
 	return mountOptions, nil
+}
+
+func (mst *initramfsMountsState) initializeAssertionDB(rootfsDir string) error {
+
+	assertsDir := dirs.SnapAssertsDBDirUnder(rootfsDir)
+	db, _ := newAssertionDB(assertsDir)
+
+	// TODO Handle error when opening of an assertion db fails.
+	// Raise it if integrity verification is enforced in run mode
+	// Ignore otherwise
+
+	mst.db = db
+
+	return nil
 }

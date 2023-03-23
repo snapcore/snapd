@@ -91,3 +91,20 @@ func generateVerityMountOptions(mountOptions *systemdMountOptions, snapInfo snap
 
 	return nil
 }
+
+// Creates an in-memory assertion db to be used for validating snap revision assertions
+// which contain integrity data
+func newAssertionDB(assertsDir string) (*asserts.Database, error) {
+
+	batch, err := LoadAssertions(assertsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := NewMemDB(batch)
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
+}
