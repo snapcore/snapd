@@ -20,32 +20,67 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/snapcore/snapd/asserts"
+	"github.com/snapcore/snapd/snap"
 	"github.com/snapcore/snapd/snap/integrity"
 )
 
-func getAndValidateVerityMountOptions(snapName string, snapRev asserts.SnapRevision) (*systemdMountOptions, error) {
-	mountOptions := &systemdMountOptions{
-		ReadOnly: true,
-		Private:  true,
-	}
-
+func generateVerityMountOptions(mountOptions *systemdMountOptions, snapInfo snap.PlaceInfo, snapName string, assertionDB *asserts.Database) error {
 	integrityData, err := integrity.FindIntegrityData(snapName)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	if integrityData == nil {
-		return nil, nil
+	snapRevNum := snapInfo.SnapRevision().String()
+
+	// Find snap-id from snap declaration
+	as, err := assertionDB.FindMany(asserts.SnapDeclarationType, map[string]string{
+		"snap-name": snapInfo.SnapName(),
+	})
+	if err != nil {
+		return err
 	}
 
-	if err := integrityData.Validate(snapRev); err != nil {
-		return nil, err
+	if len(as) > 1 {
+		/// XXX: shouldn't be reachable
+		return fmt.Errorf("GetMountOptionsForSnap: multiple snap-declaration assertions found for snap-name: %s", snapInfo.SnapName())
+	}
+
+	snapDecl, ok := as[0].(*asserts.SnapDeclaration)
+	if !ok {
+		return fmt.Errorf("GetMountOptionsForSnap: type assertion failed for snap declaration")
+	}
+
+	snapID := snapDecl.SnapID()
+
+	// Searching the database with a snap-id and snap-revision.
+	as, err = assertionDB.FindMany(asserts.SnapRevisionType, map[string]string{
+		"snap-id":       snapID,
+		"snap-revision": snapRevNum,
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(as) > 1 {
+		/// XXX: shouldn't be reachable
+		return fmt.Errorf("GetMountOptionsForSnap: multiple snap-revisions for for snap-id: %s and snap-revision: %s", snapID, snapRevNum)
+	}
+
+	snapRev, ok := as[0].(*asserts.SnapRevision)
+	if !ok {
+		return fmt.Errorf("GetMountOptionsForSnap: type assertion failed for snap revision")
+	}
+
+	if err := integrityData.Validate(*snapRev); err != nil {
+		return err
 	}
 
 	mountOptions.VerityHashDevice = integrityData.SourceFilePath
 	mountOptions.VerityRootHash = integrityData.Header.DmVerityBlock.RootHash
 	mountOptions.VerityHashOffset = integrityData.Offset
 
-	return mountOptions, nil
+	return nil
 }

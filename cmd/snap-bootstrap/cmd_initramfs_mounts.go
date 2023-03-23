@@ -1399,38 +1399,9 @@ func generateMountsCommonInstallRecover(mst *initramfsMountsState) (model *asser
 		systemSnaps[essentialSnap.EssentialType] = snapInfo
 		dir := snapTypeToMountDir[essentialSnap.EssentialType]
 
-		snapRevNum := snapInfo.SnapRevision().String()
-
-		// Searching the database with a snap-id and snap-revision.
-		as, err := mst.db.FindMany(asserts.SnapRevisionType, map[string]string{
-			"snap-id":       essentialSnap.ID(),
-			"snap-revision": snapRevNum,
-		})
+		mountOptions, err := mst.GetMountOptionsForSnap(snapInfo, essentialSnap.Path)
 		if err != nil {
 			return nil, nil, err
-		}
-
-		if len(as) < 1 {
-			return nil, nil, fmt.Errorf("generateMountsCommonInstallRecover: no snap-revision assertion found for snap-id: %s and snap-revision: %s", essentialSnap.ID(), snapRevNum)
-		}
-
-		if len(as) > 1 {
-			/// XXX: shouldn't be reachable
-			return nil, nil, fmt.Errorf("generateMountsCommonInstallRecover: multiple snap-revisions for for snap-id: %s and snap-revision: %s", essentialSnap.ID(), snapRevNum)
-		}
-
-		snapRev, ok := as[0].(*asserts.SnapRevision)
-		if !ok {
-			return nil, nil, fmt.Errorf("generateMountsCommonInstallRecover: type assertion failed for snap revision")
-		}
-
-		mountOptions, err := getAndValidateVerityMountOptions(essentialSnap.Path, *snapRev)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if mountOptions == nil {
-			mountOptions = mountReadOnlyOptions
 		}
 
 		// TODO:UC20: we need to cross-check the kernel path with snapd_recovery_kernel used by grub

@@ -151,3 +151,17 @@ func (mst *initramfsMountsState) EphemeralModeenvForModel(model *asserts.Model, 
 		//            kernel command lines?
 	}, nil
 }
+
+func (mst *initramfsMountsState) GetMountOptionsForSnap(snapInfo snap.PlaceInfo, snapPath string) (*systemdMountOptions, error) {
+	mountOptions := &systemdMountOptions{
+		ReadOnly: true,
+		Private:  true,
+	}
+
+	err := generateVerityMountOptions(mountOptions, snapInfo, snapPath, mst.db)
+	if err != nil {
+		return nil, err
+	}
+
+	return mountOptions, nil
+}
