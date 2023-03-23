@@ -28,11 +28,6 @@ import (
 )
 
 func generateVerityMountOptions(mountOptions *systemdMountOptions, snapInfo snap.PlaceInfo, snapName string, assertionDB *asserts.Database) error {
-	integrityData, err := integrity.FindIntegrityData(snapName)
-	if err != nil {
-		return err
-	}
-
 	snapRevNum := snapInfo.SnapRevision().String()
 
 	// Find snap-id from snap declaration
@@ -72,6 +67,18 @@ func generateVerityMountOptions(mountOptions *systemdMountOptions, snapInfo snap
 	snapRev, ok := as[0].(*asserts.SnapRevision)
 	if !ok {
 		return fmt.Errorf("GetMountOptionsForSnap: type assertion failed for snap revision")
+	}
+
+	// Check if revision contains integrity data
+	assertionIntegrity, _ := snapRev.Integrity().(map[string]string)
+	_, ok = assertionIntegrity["sha3-384"]
+	if !ok {
+		return nil
+	}
+
+	integrityData, err := integrity.FindIntegrityData(snapName)
+	if err != nil {
+		return err
 	}
 
 	if err := integrityData.Validate(*snapRev); err != nil {
