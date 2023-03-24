@@ -21,8 +21,8 @@ package integrity
 
 import (
 	"bytes"
+	"crypto"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,13 +30,16 @@ import (
 
 	"github.com/snapcore/snapd/asserts"
 	"github.com/snapcore/snapd/logger"
+	"github.com/snapcore/snapd/osutil"
 	"github.com/snapcore/snapd/snap/integrity/dm_verity"
 	"github.com/snapcore/snapd/snap/squashfs"
-	"golang.org/x/crypto/sha3"
 )
 
 const (
 	blockSize = 4096
+	// For now that the header only includes a fixed string and a fixed-size hash,
+	// the header size is always less than blockSize and will always get aligned to blockSize.
+	headerSize = 4096
 	// https://github.com/plougher/squashfs-tools/blob/master/squashfs-tools/squashfs_fs.h#L289
 	squashfsSuperblockBytesUsedOffset = 40
 )
@@ -55,22 +58,25 @@ type IntegrityData struct {
 	Header         *IntegrityDataHeader
 	Offset         uint64
 	SourceFilePath string
-
-	Bytes *[]byte
 }
 
 func FindIntegrityData(snapName string) (*IntegrityData, error) {
 	integrityData := IntegrityData{}
-
-	if !squashfs.FileHasSquashfsHeader(snapName) {
-		return nil, fmt.Errorf("input file does not contain a SquashFS filesystem")
-	}
 
 	snapFile, err := os.OpenFile(snapName, os.O_RDONLY, 0644)
 	if err != nil {
 		return nil, err
 	}
 	defer snapFile.Close()
+
+	snapFileInfo, err := snapFile.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if !squashfs.FileHasSquashfsHeader(snapName) {
+		return nil, fmt.Errorf("input file does not contain a SquashFS filesystem")
+	}
 
 	// Seek to bytes_used field of SquashFS superblock
 	_, err = snapFile.Seek(squashfsSuperblockBytesUsedOffset, io.SeekStart)
@@ -82,29 +88,23 @@ func FindIntegrityData(snapName string) (*IntegrityData, error) {
 
 	logger.Debugf("SquashFS bytes used: %d", squashFSSize)
 
-	snapFileInfo, err := snapFile.Stat()
-	if err != nil {
-		return nil, err
-	}
-
 	// Align squashFSSize to blockSize
 	offset := align(squashFSSize)
 
-	// If no extra data attached at the end of the squashfs return empty integrityData
 	if offset == uint64(snapFileInfo.Size()) {
-		return nil, nil
+		return nil, fmt.Errorf("Integrity data not found for snap %s", snapName)
 	}
+
+	integrityData.SourceFilePath = snapName
+	// TODO check for integrity data in separate file
 
 	_, err = snapFile.Seek(int64(offset), io.SeekStart)
 
-	integrityDataBytes := make([]byte, uint64(snapFileInfo.Size())-offset)
+	integrityDataBytes := make([]byte, uint64(headerSize))
 	n, err := snapFile.Read(integrityDataBytes)
-	if n < blockSize-1 {
+	if n < headerSize {
 		return &integrityData, fmt.Errorf("failed to read integrity data: integrity data header corrupted?")
 	}
-
-	// TODO dm-verity: try to read from a separate hash file
-	integrityData.SourceFilePath = snapName
 
 	integrityDataHeader, err := ExtractIntegrityDataHeader(integrityDataBytes)
 	if err != nil {
@@ -112,13 +112,15 @@ func FindIntegrityData(snapName string) (*IntegrityData, error) {
 	}
 	integrityData.Header = integrityDataHeader
 	integrityData.Offset = offset
-	integrityData.Bytes = &integrityDataBytes
 
 	return &integrityData, nil
 }
 
 func (integrityData IntegrityData) Validate(snapRev asserts.SnapRevision) error {
-	integrityDataHash := integrityData.Sha3_384()
+	integrityDataHash, err := integrityData.SHA3_384()
+	if err != nil {
+		return err
+	}
 
 	assertionIntegrity, _ := snapRev.Integrity().(map[string]string)
 	assertionIntegrityHash := assertionIntegrity["sha3-384"]
@@ -132,7 +134,7 @@ func (integrityData IntegrityData) Validate(snapRev asserts.SnapRevision) error 
 func ExtractIntegrityDataHeader(integrityDataBytes []byte) (*IntegrityDataHeader, error) {
 	integrityDataHeader := IntegrityDataHeader{}
 
-	err := integrityDataHeader.Unserialize(integrityDataBytes[:blockSize])
+	err := integrityDataHeader.Unserialize(integrityDataBytes[:headerSize])
 	if err != nil {
 		return nil, err
 	}
@@ -140,9 +142,17 @@ func ExtractIntegrityDataHeader(integrityDataBytes []byte) (*IntegrityDataHeader
 	return &integrityDataHeader, nil
 }
 
-func (integrityData IntegrityData) Sha3_384() string {
-	hash := sha3.Sum384(*integrityData.Bytes)
-	return hex.EncodeToString(hash[:])
+func (integrityData IntegrityData) SHA3_384() (string, error) {
+	digest, _, err := osutil.PartialFileDigest(integrityData.SourceFilePath, crypto.SHA3_384, integrityData.Offset)
+	if err != nil {
+		return "", err
+	}
+
+	sha3_384, err := asserts.EncodeDigest(crypto.SHA3_384, digest)
+	if err != nil {
+		return "", fmt.Errorf("cannot encode snap's %q integrity data digest: %v", integrityData.SourceFilePath, err)
+	}
+	return sha3_384, nil
 }
 
 // IntegrityDataHeader gets appended first at the end of a squashfs packed snap
@@ -165,9 +175,6 @@ func NewIntegrityDataHeader(dmVerityBlock *dm_verity.DmVerityBlock, integrityDat
 		return nil, err
 	}
 
-	// For now that the header only includes a fixed string and a fixed-size hash,
-	// the size calculation is irrelevant and will effectively always return blockSize
-	headerSize := align(uint64(len(magic) + len(jsonHeader) + 1))
 	logger.Debugf("Magic size: %d", len(magic))
 	logger.Debugf("IntegrityDataHeader JSON size: %d (+1 byte for the null byte)", len(jsonHeader))
 	logger.Debugf("Aligned header size: %d", headerSize)
@@ -187,7 +194,6 @@ func (integrityDataHeader IntegrityDataHeader) Serialize() ([]byte, error) {
 	// \0 terminate
 	jsonHeader = append(jsonHeader, 0)
 
-	headerSize := align(uint64(len(magic) + len(jsonHeader)))
 	header := make([]byte, headerSize)
 
 	copy(header, append(magic, jsonHeader...))

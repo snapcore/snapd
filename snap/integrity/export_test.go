@@ -20,7 +20,8 @@
 package integrity
 
 var (
-	Align     = align
-	BlockSize = blockSize
-	Magic     = magic
+	Align      = align
+	BlockSize  = blockSize
+	HeaderSize = headerSize
+	Magic      = magic
 )
