@@ -1,6 +1,6 @@
 name: test-snapd-xdg-dir
-base: core22
-version: '1.2'
+base: core18
+version: '1.4'
 summary: A test to check the existence of the XDG_RUNTIME_DIR folder
 description: |
   A test to check the existence of the XDG_RUNTIME_DIR folder
@@ -8,8 +8,8 @@ grade: stable
 confinement: strict
 
 architectures:
-  - build-on: [ amd64, arm64 ]
-    build-for: [ all ]
+  - build-on: [ amd64, arm64, i386 ]
+    run-on: [ all ]
 
 apps:
   test-snapd-xdg-dir:
@@ -20,5 +20,5 @@ parts:
     plugin: nil
     override-prime: |
       mkdir -p snap/command-chain
-      cp $CRAFT_PROJECT_DIR/script.sh snap/command-chain
-      craftctl default
+      cp $SNAPCRAFT_PROJECT_DIR/script.sh snap/command-chain
+      snapcraftctl prime
