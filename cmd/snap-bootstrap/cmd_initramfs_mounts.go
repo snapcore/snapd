@@ -1433,10 +1433,17 @@ func generateMountsCommonInstallRecover(mst *initramfsMountsState) (model *asser
 	systemSnaps := make(map[snap.Type]snap.PlaceInfo)
 
 	for _, essentialSnap := range essSnaps {
-		systemSnaps[essentialSnap.EssentialType] = essentialSnap.PlaceInfo()
+		snapInfo := essentialSnap.PlaceInfo()
+		systemSnaps[essentialSnap.EssentialType] = snapInfo
 		dir := snapTypeToMountDir[essentialSnap.EssentialType]
+
+		mountOptions, err := mst.GetMountOptionsForSnap(snapInfo, essentialSnap.Path)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		// TODO:UC20: we need to cross-check the kernel path with snapd_recovery_kernel used by grub
-		if err := doSystemdMount(essentialSnap.Path, filepath.Join(boot.InitramfsRunMntDir, dir), mountReadOnlyOptions); err != nil {
+		if err := doSystemdMount(essentialSnap.Path, filepath.Join(boot.InitramfsRunMntDir, dir), mountOptions); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1793,6 +1800,11 @@ func generateMountsModeRun(mst *initramfsMountsState) error {
 		return err
 	}
 
+	err = mst.initializeAssertionDB(dirs.SnapAssertsDBDirUnder(rootfsDir))
+	if err != nil {
+		return err
+	}
+
 	// TODO:UC20: with grade > dangerous, verify the kernel snap hash against
 	//            what we booted using the tpm log, this may need to be passed
 	//            to the function above to make decisions there, or perhaps this
@@ -1803,7 +1815,13 @@ func generateMountsModeRun(mst *initramfsMountsState) error {
 		if sn, ok := mounts[typ]; ok {
 			dir := snapTypeToMountDir[typ]
 			snapPath := filepath.Join(dirs.SnapBlobDirUnder(rootfsDir), sn.Filename())
-			if err := doSystemdMount(snapPath, filepath.Join(boot.InitramfsRunMntDir, dir), mountReadOnlyOptions); err != nil {
+
+			mountOptions, err := mst.GetMountOptionsForSnap(sn, snapPath)
+			if err != nil {
+				return err
+			}
+
+			if err := doSystemdMount(snapPath, filepath.Join(boot.InitramfsRunMntDir, dir), mountOptions); err != nil {
 				return err
 			}
 		}

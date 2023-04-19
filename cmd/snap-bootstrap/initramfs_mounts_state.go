@@ -28,6 +28,7 @@ import (
 
 	"github.com/snapcore/snapd/asserts"
 	"github.com/snapcore/snapd/boot"
+	"github.com/snapcore/snapd/dirs"
 	"github.com/snapcore/snapd/gadget"
 	"github.com/snapcore/snapd/logger"
 	"github.com/snapcore/snapd/osutil"
@@ -48,6 +49,7 @@ type initramfsMountsState struct {
 	recoverySystem string
 
 	verifiedModel gadget.Model
+	db            *asserts.Database
 }
 
 var errRunModeNoImpliedRecoverySystem = errors.New("internal error: no implied recovery system in run mode")
@@ -79,10 +81,12 @@ func (mst *initramfsMountsState) ReadEssential(recoverySystem string, essentialT
 	if runtimeNumCPU() > 1 {
 		jobs = 2
 	}
-	model, snaps, newTrustedEarliestTime, err := seed.ReadSystemEssentialAndBetterEarliestTime(boot.InitramfsUbuntuSeedDir, recoverySystem, essentialTypes, now, jobs, perf)
+	model, snaps, db, newTrustedEarliestTime, err := seed.ReadSystemEssentialAndBetterEarliestTime(boot.InitramfsUbuntuSeedDir, recoverySystem, essentialTypes, now, jobs, perf)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	mst.db = db
 
 	// set the time on the system to move forward if it is in the future - never
 	// move the time backwards
@@ -147,4 +151,36 @@ func (mst *initramfsMountsState) EphemeralModeenvForModel(model *asserts.Model, 
 		// TODO:UC20: what about current kernel snaps, trusted boot assets and
 		//            kernel command lines?
 	}, nil
+}
+
+func (mst *initramfsMountsState) GetMountOptionsForSnap(snapInfo snap.PlaceInfo, snapPath string) (*systemdMountOptions, error) {
+	mountOptions := &systemdMountOptions{
+		ReadOnly: true,
+		Private:  true,
+	}
+
+	if mst.db == nil {
+		return mountOptions, nil
+	}
+
+	err := generateVerityMountOptions(mountOptions, snapInfo, snapPath, mst.db)
+	if err != nil {
+		return nil, err
+	}
+
+	return mountOptions, nil
+}
+
+func (mst *initramfsMountsState) initializeAssertionDB(rootfsDir string) error {
+
+	assertsDir := dirs.SnapAssertsDBDirUnder(rootfsDir)
+	db, _ := newAssertionDB(assertsDir)
+
+	// TODO Handle error when opening of an assertion db fails.
+	// Raise it if integrity verification is enforced in run mode
+	// Ignore otherwise
+
+	mst.db = db
+
+	return nil
 }

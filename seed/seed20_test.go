@@ -1312,7 +1312,7 @@ func (s *seed20Suite) TestReadSystemEssentialAndBetterEarliestTime(c *C) {
 
 		for _, t := range tests {
 			// test short-cut helper as well
-			mod, essSnaps, betterTime, err := seed.ReadSystemEssentialAndBetterEarliestTime(s.SeedDir, sysLabel, t.onlyTypes, earliestTime, 0, s.perfTimings)
+			mod, essSnaps, _, betterTime, err := seed.ReadSystemEssentialAndBetterEarliestTime(s.SeedDir, sysLabel, t.onlyTypes, earliestTime, 0, s.perfTimings)
 			c.Assert(err, IsNil)
 			c.Check(mod.BrandID(), Equals, "my-brand")
 			c.Check(mod.Model(), Equals, "my-model")
@@ -1379,7 +1379,7 @@ func (s *seed20Suite) TestReadSystemEssentialAndBetterEarliestTimeParallelism(c 
 			}},
 	}, nil)
 
-	_, _, _, err := seed.ReadSystemEssentialAndBetterEarliestTime(s.SeedDir, sysLabel, nil, time.Time{}, 3, s.perfTimings)
+	_, _, _, _, err := seed.ReadSystemEssentialAndBetterEarliestTime(s.SeedDir, sysLabel, nil, time.Time{}, 3, s.perfTimings)
 	c.Assert(err, IsNil)
 	c.Assert(testSeed, NotNil)
 	c.Check(testSeed.Jobs, Equals, 3)
