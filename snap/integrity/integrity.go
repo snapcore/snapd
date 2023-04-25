@@ -24,6 +24,7 @@ import (
 	"crypto"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -80,7 +81,7 @@ func FindIntegrityData(snapName string) (*IntegrityData, error) {
 	}
 
 	if !squashfs.FileHasSquashfsHeader(snapName) {
-		return nil, fmt.Errorf("input file does not contain a SquashFS filesystem")
+		return nil, errors.New("input file does not contain a SquashFS filesystem")
 	}
 
 	// Seek to bytes_used field of SquashFS superblock
@@ -138,11 +139,11 @@ func (integrityData IntegrityData) Validate(snapRev asserts.SnapRevision) error 
 
 	snapRevIntegrityData := snapRev.SnapIntegrity()
 	if snapRevIntegrityData == nil {
-		return fmt.Errorf("Snap revision assertion does not contain an integrity stanza")
+		return errors.New("Snap revision assertion does not contain an integrity stanza")
 	}
 
 	if integrityDataHash != snapRevIntegrityData.SHA3_384 {
-		return fmt.Errorf("integrity data hash mismatch")
+		return errors.New("integrity data hash mismatch")
 	}
 	return nil
 }
@@ -205,7 +206,7 @@ func (integrityDataHeader IntegrityDataHeader) Encode() ([]byte, error) {
 
 	actualHeaderSize := align(uint64(len(magic) + len(jsonHeader) + 1))
 	if actualHeaderSize > HeaderSize {
-		return nil, fmt.Errorf("internal error: invalid integrity data header: wrong size")
+		return nil, errors.New("internal error: invalid integrity data header: wrong size")
 	}
 
 	header := make([]byte, HeaderSize)
@@ -219,12 +220,12 @@ func (integrityDataHeader IntegrityDataHeader) Encode() ([]byte, error) {
 // IntegrityDataHeader struct.
 func (integrityDataHeader *IntegrityDataHeader) Decode(input []byte) error {
 	if !bytes.HasPrefix(input, magic) {
-		return fmt.Errorf("invalid integrity data header: invalid magic value")
+		return errors.New("invalid integrity data header: invalid magic value")
 	}
 
 	firstNull := bytes.IndexByte(input, '\x00')
 	if firstNull == -1 {
-		return fmt.Errorf("invalid integrity data header: no null byte found at end of input")
+		return errors.New("invalid integrity data header: no null byte found at end of input")
 	}
 
 	err := json.Unmarshal(input[len(magic):firstNull], &integrityDataHeader)
