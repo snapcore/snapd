@@ -927,12 +927,24 @@ func asyncRefreshOnSnapClose(st *state.State, refreshInfo *userclient.PendingSna
 	monitoredSnaps[refreshInfo.InstanceName] = abort
 	updateMonitoringState(st, monitoredSnaps)
 
-	go continueRefreshOnSnapClose(st, refreshInfo.InstanceName, done, abort)
+	go continueRefreshOnSnapClose(st, refreshInfo.InstanceName, refreshInfo.BusyAppDesktopEntry, done, abort)
 
 	return nil
 }
 
-func continueRefreshOnSnapClose(st *state.State, instanceName string, done <-chan string, abort <-chan bool) {
+// asyncDelayedfreshNotification broadcasts a notification in a goroutine when a delayed refresh begins.
+//
+// This allows the, possibly slow, communication with each snapd session agent,
+// to be performed without holding the snap state lock.
+func asyncDelayedRefreshNotification(client *userclient.Client, cxt context.Context, data userclient.DelayedRefreshNotifyInfo) {
+	go func() {
+		if err := client.DelayedRefreshNotification(cxt, data); err != nil {
+			logger.Noticef("Cannot send notification about a started delayed refresh: %v", err)
+		}
+	}()
+}
+
+func continueRefreshOnSnapClose(st *state.State, instanceName string, desktopEntry string, done <-chan string, abort <-chan bool) {
 	continueAutoRefresh := false
 	select {
 	case <-done:
@@ -960,6 +972,13 @@ func continueRefreshOnSnapClose(st *state.State, instanceName string, done <-cha
 
 	if continueAutoRefresh {
 		continueInhibitedAutoRefresh(st)
+
+		data := userclient.DelayedRefreshNotifyInfo{
+			SnapName:    instanceName,
+			DesktopFile: filepath.Join(dirs.SnapDesktopFilesDir, desktopEntry+".desktop"),
+		}
+
+		asyncDelayedRefreshNotification(userclient.New(), context.TODO(), data)
 	}
 }
 
