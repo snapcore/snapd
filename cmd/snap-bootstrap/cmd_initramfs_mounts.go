@@ -1688,8 +1688,14 @@ func generateMountsCommonInstallRecoverStart(mst *initramfsMountsState) (model *
 	for _, essentialSnap := range essSnaps {
 		systemSnaps[essentialSnap.EssentialType] = essentialSnap
 		dir := snapTypeToMountDir[essentialSnap.EssentialType]
+
+		mountOptions, err := mst.GetVerityOptionsForSeedSnap(essentialSnap, mountReadOnlyOptions)
+		if err != nil {
+			return nil, nil, err
+		}
+
 		// TODO:UC20: we need to cross-check the kernel path with snapd_recovery_kernel used by grub
-		if err := doSystemdMount(essentialSnap.Path, filepath.Join(boot.InitramfsRunMntDir, dir), mountReadOnlyOptions); err != nil {
+		if err := doSystemdMount(essentialSnap.Path, filepath.Join(boot.InitramfsRunMntDir, dir), mountOptions); err != nil {
 			return nil, nil, err
 		}
 	}

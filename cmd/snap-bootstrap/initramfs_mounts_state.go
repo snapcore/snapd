@@ -159,3 +159,16 @@ func (mst *initramfsMountsState) EphemeralModeenvForModel(model *asserts.Model, 
 		//            kernel command lines?
 	}, nil
 }
+
+// GetVerityOptionsForSeedSnap returns additional dm-verity options for a seed snap.
+func (mst *initramfsMountsState) GetVerityOptionsForSeedSnap(snap *seed.Snap, mountOptions *systemdMountOptions) (*systemdMountOptions, error) {
+	if snap.IntegrityData != nil {
+		mountOptions.VerityHashDevice = snap.IntegrityData.SourceFilePath
+		mountOptions.VerityRootHash = snap.IntegrityData.Header.DmVerity.RootHash
+		mountOptions.VerityHashOffset = snap.IntegrityData.Offset
+	}
+
+	// TODO: paranoia check, return error if integrity data should be required depending on the state
+
+	return mountOptions, nil
+}
