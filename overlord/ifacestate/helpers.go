@@ -687,7 +687,6 @@ var DebugAutoConnectCheck func(*policy.ConnectCandidate, interfaces.SideArity, e
 
 type autoConnectChecker struct {
 	st   *state.State
-	task *state.Task
 	repo *interfaces.Repository
 
 	deviceCtx snapstate.DeviceContext
@@ -695,14 +694,13 @@ type autoConnectChecker struct {
 	baseDecl  *asserts.BaseDeclaration
 }
 
-func newAutoConnectChecker(s *state.State, task *state.Task, repo *interfaces.Repository, deviceCtx snapstate.DeviceContext) (*autoConnectChecker, error) {
+func newAutoConnectChecker(s *state.State, repo *interfaces.Repository, deviceCtx snapstate.DeviceContext) (*autoConnectChecker, error) {
 	baseDecl, err := assertstate.BaseDeclaration(s)
 	if err != nil {
 		return nil, fmt.Errorf("internal error: cannot find base declaration: %v", err)
 	}
 	return &autoConnectChecker{
 		st:        s,
-		task:      task,
 		repo:      repo,
 		deviceCtx: deviceCtx,
 		cache:     make(map[string]*asserts.SnapDeclaration),
@@ -816,7 +814,7 @@ func filterUbuntuCoreSlots(candidates []*snap.SlotInfo, arities []interfaces.Sid
 // conns. cannotAutoConnectLog is called to build a log message in
 // case no applicable pair was found. conflictError is called
 // to handle checkAutoconnectConflicts errors.
-func (c *autoConnectChecker) addAutoConnections(newconns map[string]*interfaces.ConnRef, plugs []*snap.PlugInfo, filter func([]*snap.SlotInfo) []*snap.SlotInfo, conns map[string]*schema.ConnState, cannotAutoConnectLog func(plug *snap.PlugInfo, candRefs []string) string, conflictError func(*state.Retry, error) error) error {
+func (c *autoConnectChecker) addAutoConnections(task *state.Task, newconns map[string]*interfaces.ConnRef, plugs []*snap.PlugInfo, filter func([]*snap.SlotInfo) []*snap.SlotInfo, conns map[string]*schema.ConnState, cannotAutoConnectLog func(plug *snap.PlugInfo, candRefs []string) string, conflictError func(*state.Retry, error) error) error {
 	for _, plug := range plugs {
 		candSlots, arities := c.repo.AutoConnectCandidateSlots(plug.Snap.InstanceName(), plug.Name, c.check)
 
@@ -852,12 +850,12 @@ func (c *autoConnectChecker) addAutoConnections(newconns map[string]*interfaces.
 			for i, candidate := range candSlots {
 				crefs[i] = candidate.String()
 			}
-			c.task.Logf(cannotAutoConnectLog(plug, crefs))
+			task.Logf(cannotAutoConnectLog(plug, crefs))
 			continue
 		}
 
 		for _, slot := range applicable {
-			if err := addNewConnection(c.st, c.task, newconns, conns, plug, slot, conflictError); err != nil {
+			if err := addNewConnection(c.st, task, newconns, conns, plug, slot, conflictError); err != nil {
 				return err
 			}
 		}
