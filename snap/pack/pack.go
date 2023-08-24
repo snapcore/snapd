@@ -106,6 +106,12 @@ func CheckSkeleton(w io.Writer, sourceDir string) error {
 	return err
 }
 
+func hasConfigureHook(info *snap.Info) bool {
+	hasDefaultConfigureHook := info.Hooks["default-configure"] != nil
+	hasConfigureHook := info.Hooks["configure"] != nil
+	return hasDefaultConfigureHook || hasConfigureHook
+}
+
 func loadAndValidate(sourceDir string) (*snap.Info, error) {
 	// Parsing of snap info is duplicated in ReadInfoFromSnapFile. It is done
 	// here to retrieve the snap instance name, if available, to use in case of
@@ -133,6 +139,14 @@ func loadAndValidate(sourceDir string) (*snap.Info, error) {
 
 	if err := snap.ValidateContainer(snapdir.New(sourceDir), info, logger.Noticef); err != nil {
 		return nil, err
+	}
+
+	if hasConfigureHook(info) {
+		for _, configureNotAllowedSnapType := range []snap.Type{snap.TypeSnapd, snap.TypeOS, snap.TypeBase} {
+			if info.SnapType == configureNotAllowedSnapType {
+				return nil, fmt.Errorf("snap type %q does not support the default-configure or configure hook", info.SnapType)
+			}
+		}
 	}
 
 	if info.SnapType == snap.TypeGadget {
