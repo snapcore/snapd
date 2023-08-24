@@ -172,6 +172,22 @@ apps:
 	}
 }
 
+func (s *packSuite) TestPackConfigureHooksNotSupportedError(c *C) {
+	for _, snapType := range []string{"snapd", "os", "base"} {
+		snapYaml := fmt.Sprintf(`name: core
+version: 0
+type: %s
+apps:
+  foo:
+    command: bin/hello-world`, snapType)
+		sourceDir := makeExampleSnapSourceDir(c, snapYaml)
+		c.Assert(os.Mkdir(filepath.Join(sourceDir, "meta", "hooks"), 0755), IsNil)
+		c.Assert(ioutil.WriteFile(filepath.Join(sourceDir, "meta", "hooks", "configure"), []byte("#!/bin/sh"), 0755), IsNil)
+		_, err := pack.Snap(sourceDir, pack.Defaults)
+		c.Check(err, ErrorMatches, fmt.Sprintf("snap type \"%s\" does not support the default-configure or configure hook", snapType), Commentf("snap type: %q", snapType))
+	}
+}
+
 func (s *packSuite) TestPackConfigureHooksHappy(c *C) {
 	sourceDir := makeExampleSnapSourceDir(c, `name: hello
 version: 0

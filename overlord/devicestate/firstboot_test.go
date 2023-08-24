@@ -433,9 +433,6 @@ func (s *firstBoot16Suite) TestPopulateFromSeedErrorsOnState(c *C) {
 
 func (s *firstBoot16BaseTest) makeCoreSnaps(c *C, extraGadgetYaml string) (coreFname, kernelFname, gadgetFname string) {
 	files := [][]string{}
-	if strings.Contains(extraGadgetYaml, "defaults:") {
-		files = [][]string{{"meta/hooks/configure", ""}}
-	}
 
 	// put core snap into the SnapBlobDir
 	snapYaml := `name: core
@@ -443,6 +440,11 @@ version: 1.0
 type: os`
 	coreFname, coreDecl, coreRev := s.MakeAssertedSnap(c, snapYaml, files, snap.R(1), "canonical")
 	s.WriteAssertions("core.asserts", coreRev, coreDecl)
+
+	// Only add configure hook for kernel and gadget, not allowed for core
+	if strings.Contains(extraGadgetYaml, "defaults:") {
+		files = [][]string{{"meta/hooks/default-configure", ""}, {"meta/hooks/configure", ""}}
+	}
 
 	// put kernel snap into the SnapBlobDir
 	snapYaml = `name: pc-kernel
@@ -834,6 +836,11 @@ snaps:
 	c.Check(pubAcct.AccountID(), Equals, "developerid")
 }
 
+// TODO: Currently this test fails when adding default configure hook to the helper function makeCoreSnaps.
+// The runhook mock below checks that a gadget snap is installed when the hook run is requested, but this
+// is not the case with pre-seeding and seeding task order, because default-configure is not moved to after
+// essential snap install like configure hook. This is exactly the current problem with firstboot task order,
+// hence SNAPDENG-8412.
 func (s *firstBoot16Suite) TestPopulateFromSeedConfigureHappy(c *C) {
 	bloader := boottest.MockUC16Bootenv(bootloadertest.Mock("mock", c.MkDir()))
 	bootloader.Force(bloader)
