@@ -106,27 +106,47 @@ func CheckSkeleton(w io.Writer, sourceDir string) error {
 	return err
 }
 
+func hasConfigureHook(info *snap.Info) bool {
+	hasDefaultConfigureHook := info.Hooks["default-configure"] != nil
+	hasConfigureHook := info.Hooks["configure"] != nil
+	return hasDefaultConfigureHook || hasConfigureHook
+}
+
 func loadAndValidate(sourceDir string) (*snap.Info, error) {
-	// ensure we have valid content
+	// Parsing of snap info is duplicated in ReadInfoFromSnapFile. It is done
+	// here to retrieve the snap instance name, if available, to use in case of
+	// ReadInfoFromSnapFile error
 	yaml, err := ioutil.ReadFile(filepath.Join(sourceDir, "meta", "snap.yaml"))
 	if err != nil {
 		return nil, err
 	}
-
 	info, err := snap.InfoFromSnapYaml(yaml)
 	if err != nil {
 		return nil, err
 	}
+	instanceName := info.InstanceName()
 
-	if err := snap.Validate(info); err != nil {
-		return nil, fmt.Errorf("cannot validate snap %q: %v", info.InstanceName(), err)
+	// ReadInfoFromSnapFile covers the following required steps:
+	// 	- Read snap metadata from meta/snap.yaml
+	//      - Parse snap info from meta/snap.yaml without side info
+	//      - Add and bind implicit hooks from meta/hooks
+	//      - Validate available snap information
+	//      - Validate snapshot metadata from opional meta/snapshot.yaml
+	info, err = snap.ReadInfoFromSnapFile(snapdir.New(sourceDir), nil)
+	if err != nil {
+		return nil, fmt.Errorf("cannot validate snap %q: %v", instanceName, err)
 	}
 
 	if err := snap.ValidateContainer(snapdir.New(sourceDir), info, logger.Noticef); err != nil {
 		return nil, err
 	}
-	if _, err := snap.ReadSnapshotYamlFromSnapFile(snapdir.New(sourceDir)); err != nil {
-		return nil, err
+
+	if hasConfigureHook(info) {
+		for _, configureNotAllowedSnapType := range []snap.Type{snap.TypeSnapd, snap.TypeOS, snap.TypeBase} {
+			if info.SnapType == configureNotAllowedSnapType {
+				return nil, fmt.Errorf("snap type %q does not support the default-configure or configure hook", info.SnapType)
+			}
+		}
 	}
 
 	if info.SnapType == snap.TypeGadget {
