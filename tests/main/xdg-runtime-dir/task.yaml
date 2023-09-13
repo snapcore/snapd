@@ -5,7 +5,7 @@ details: |
 
 prepare: |
     echo Testing XDG_RUNTIME_DIR
-    snap install --edge test-snapd-xdg-dir
+    "$TESTSTOOLS"/snaps-state install-local test-snapd-xdg-dir
     rm -f /run/user/0/snap.test-snapd-xdg-dir
 
 execute: |
