@@ -1218,7 +1218,7 @@ func (x *cmdRun) runSnapConfine(info *snap.Info, securityTag, snapApp, hook stri
 	// Guarantee that XDG_RUNTIME_DIR does exist before launching the snap
 	if xdg_runtime_dir, exists := env["XDG_RUNTIME_DIR"]; exists {
 		if _, err = os.Stat(xdg_runtime_dir); os.IsNotExist(err) {
-			if err = os.Mkdir(xdg_runtime_dir, 0700); err != nil && err != os.ErrExist {
+			if err = os.Mkdir(xdg_runtime_dir, 0700); err != nil {
 				// Can't return an error because some tests would fail
 				logger.Noticef("WARNING: Can't create XDG_RUNTIME_DIR folder %v: %v", xdg_runtime_dir, err)
 			}
