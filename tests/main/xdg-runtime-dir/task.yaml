@@ -14,3 +14,5 @@ execute: |
     #   making the task fail in that case.
     snap run test-snapd-xdg-dir || echo "The XDG_RUNTIME_DIR folder doesn't exist inside the environment"
     test -d /run/user/0/snap.test-snapd-xdg-dir
+    # re-run the test to ensure that it doesn't fail if the folder already exists
+    snap run test-snapd-xdg-dir || echo "The test failed when the folder already exists"
