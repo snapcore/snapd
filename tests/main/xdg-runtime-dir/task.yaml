@@ -15,4 +15,4 @@ execute: |
     snap run test-snapd-xdg-dir
     test -d /run/user/0/snap.test-snapd-xdg-dir
     # re-run the test to ensure that it doesn't fail if the folder already exists
-    snap run test-snapd-xdg-dir || echo "The test failed when the folder already exists"
+    snap run test-snapd-xdg-dir
