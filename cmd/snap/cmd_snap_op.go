@@ -744,7 +744,10 @@ func (x *cmdRefresh) refreshMany(snaps []string, opts *client.SnapOptions) error
 		return showDone(x.client, chg, refreshed, "refresh", opts, x.getEscapes())
 	}
 
-	fmt.Fprintln(Stderr, i18n.G("All snaps up to date."))
+	_, lastTimestamp := x.client.WarningsSummary()
+	if lastSeenTimestamp, _ := lastSeenWarningTimestamp(); !lastTimestamp.After(lastSeenTimestamp) {
+		fmt.Fprintln(Stderr, i18n.G("All snaps up to date."))
+	}
 
 	return nil
 }

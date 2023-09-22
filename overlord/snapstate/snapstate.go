@@ -1950,6 +1950,7 @@ func doUpdate(ctx context.Context, st *state.State, names []string, updates []mi
 		if err != nil {
 			if refreshAll {
 				logger.Noticef("cannot update %q: %v", update.InstanceName(), err)
+				st.Warnf("cannot update %q: %v", update.InstanceName(), err)
 				continue
 			}
 			return nil, nil, err
@@ -1967,6 +1968,7 @@ func doUpdate(ctx context.Context, st *state.State, names []string, updates []mi
 			if refreshAll {
 				// doing "refresh all", just skip this snap
 				logger.Noticef("cannot refresh snap %q: %v", update.InstanceName(), err)
+				st.Warnf("cannot refresh %q: %v", update.InstanceName(), err)
 				continue
 			}
 			return nil, nil, err
