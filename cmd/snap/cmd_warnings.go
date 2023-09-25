@@ -85,7 +85,7 @@ func (cmd *cmdWarnings) Execute(args []string) error {
 		return err
 	}
 	if len(warnings) == 0 {
-		if t, _ := lastWarningTimestamp(); t.IsZero() {
+		if t, _ := lastSeenWarningTimestamp(); t.IsZero() {
 			fmt.Fprintln(Stdout, i18n.G("No warnings."))
 		} else {
 			fmt.Fprintln(Stdout, i18n.G("No further warnings."))
@@ -136,7 +136,7 @@ func (cmd *cmdOkay) Execute(args []string) error {
 		return ErrExtraArgs
 	}
 
-	last, err := lastWarningTimestamp()
+	last, err := lastSeenWarningTimestamp()
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func writeWarningTimestamp(t time.Time) error {
 	return aw.Commit()
 }
 
-func lastWarningTimestamp() (time.Time, error) {
+func lastSeenWarningTimestamp() (time.Time, error) {
 	user, err := osutil.UserMaybeSudoUser()
 	if err != nil {
 		return time.Time{}, fmt.Errorf("cannot determine real user: %v", err)
@@ -213,12 +213,12 @@ func lastWarningTimestamp() (time.Time, error) {
 	return d.Timestamp, nil
 }
 
-func maybePresentWarnings(count int, timestamp time.Time) {
+func maybePresentWarnings(count int, lastTimestamp time.Time) {
 	if count == 0 {
 		return
 	}
 
-	if last, _ := lastWarningTimestamp(); !timestamp.After(last) {
+	if lastSeenTimestamp, _ := lastSeenWarningTimestamp(); !lastTimestamp.After(lastSeenTimestamp) {
 		return
 	}
 
