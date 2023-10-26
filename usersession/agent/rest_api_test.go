@@ -361,6 +361,277 @@ func (s *restSuite) TestServicesStopReportsError(c *C) {
 	})
 }
 
+func (s *restSuite) TestServicesRestart(c *C) {
+	req := httptest.NewRequest("POST", "/v1/service-control", bytes.NewBufferString(`{"action":"restart","services":["snap.foo.service", "snap.bar.service"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	agent.ServiceControlCmd.POST(agent.ServiceControlCmd, req).ServeHTTP(rec, req)
+	c.Check(rec.Code, Equals, 200)
+	c.Check(rec.Header().Get("Content-Type"), Equals, "application/json")
+
+	var rsp resp
+	c.Assert(json.Unmarshal(rec.Body.Bytes(), &rsp), IsNil)
+	c.Check(rsp.Type, Equals, agent.ResponseTypeSync)
+	c.Check(rsp.Result, Equals, nil)
+
+	c.Check(s.sysdLog, DeepEquals, [][]string{
+		{"--user", "stop", "snap.foo.service"},
+		{"--user", "show", "--property=ActiveState", "snap.foo.service"},
+		{"--user", "start", "snap.foo.service"},
+		{"--user", "stop", "snap.bar.service"},
+		{"--user", "show", "--property=ActiveState", "snap.bar.service"},
+		{"--user", "start", "snap.bar.service"},
+	})
+}
+
+func (s *restSuite) TestServicesRestartNonSnap(c *C) {
+	req := httptest.NewRequest("POST", "/v1/service-control", bytes.NewBufferString(`{"action":"restart","services":["snap.foo.service", "not-snap.bar.service"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	agent.ServiceControlCmd.POST(agent.ServiceControlCmd, req).ServeHTTP(rec, req)
+	c.Check(rec.Code, Equals, 500)
+	c.Check(rec.Header().Get("Content-Type"), Equals, "application/json")
+
+	var rsp resp
+	c.Assert(json.Unmarshal(rec.Body.Bytes(), &rsp), IsNil)
+	c.Check(rsp.Type, Equals, agent.ResponseTypeError)
+	c.Check(rsp.Result, DeepEquals, map[string]interface{}{
+		"message": "cannot restart non-snap service not-snap.bar.service",
+	})
+
+	// No services were started on the error.
+	c.Check(s.sysdLog, HasLen, 0)
+}
+
+func (s *restSuite) TestServicesRestartReportsError(c *C) {
+	var sysdLog [][]string
+	restore := systemd.MockSystemctl(func(cmd ...string) ([]byte, error) {
+		// Ignore "show" spam
+		if cmd[1] != "show" {
+			sysdLog = append(sysdLog, cmd)
+		}
+		if cmd[len(cmd)-1] == "snap.bar.service" {
+			return []byte("ActiveState=active\n"), errors.New("mock systemctl error")
+		}
+		return []byte("ActiveState=inactive\n"), nil
+	})
+	defer restore()
+
+	req := httptest.NewRequest("POST", "/v1/service-control", bytes.NewBufferString(`{"action":"restart","services":["snap.foo.service", "snap.bar.service"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	agent.ServiceControlCmd.POST(agent.ServiceControlCmd, req).ServeHTTP(rec, req)
+	c.Check(rec.Code, Equals, 500)
+	c.Check(rec.Header().Get("Content-Type"), Equals, "application/json")
+
+	var rsp resp
+	c.Assert(json.Unmarshal(rec.Body.Bytes(), &rsp), IsNil)
+	c.Check(rsp.Type, Equals, agent.ResponseTypeError)
+	c.Check(rsp.Result, DeepEquals, map[string]interface{}{
+		"kind":    "service-control",
+		"message": "some user services failed to restart",
+		"value": map[string]interface{}{
+			"restart-errors": map[string]interface{}{
+				"snap.bar.service": "mock systemctl error",
+			},
+		},
+	})
+
+	c.Check(sysdLog, DeepEquals, [][]string{
+		{"--user", "stop", "snap.foo.service"},
+		{"--user", "start", "snap.foo.service"},
+		{"--user", "stop", "snap.bar.service"},
+	})
+}
+
+func (s *restSuite) TestServicesRestartOrReload(c *C) {
+	req := httptest.NewRequest("POST", "/v1/service-control", bytes.NewBufferString(`{"action":"reload-or-restart","services":["snap.foo.service", "snap.bar.service"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	agent.ServiceControlCmd.POST(agent.ServiceControlCmd, req).ServeHTTP(rec, req)
+	c.Check(rec.Code, Equals, 200)
+	c.Check(rec.Header().Get("Content-Type"), Equals, "application/json")
+
+	var rsp resp
+	c.Assert(json.Unmarshal(rec.Body.Bytes(), &rsp), IsNil)
+	c.Check(rsp.Type, Equals, agent.ResponseTypeSync)
+	c.Check(rsp.Result, Equals, nil)
+
+	c.Check(s.sysdLog, DeepEquals, [][]string{
+		{"--user", "reload-or-restart", "snap.foo.service"},
+		{"--user", "reload-or-restart", "snap.bar.service"},
+	})
+}
+
+func (s *restSuite) TestServicesRestartOrReloadNonSnap(c *C) {
+	req := httptest.NewRequest("POST", "/v1/service-control", bytes.NewBufferString(`{"action":"reload-or-restart","services":["snap.foo.service", "not-snap.bar.service"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	agent.ServiceControlCmd.POST(agent.ServiceControlCmd, req).ServeHTTP(rec, req)
+	c.Check(rec.Code, Equals, 500)
+	c.Check(rec.Header().Get("Content-Type"), Equals, "application/json")
+
+	var rsp resp
+	c.Assert(json.Unmarshal(rec.Body.Bytes(), &rsp), IsNil)
+	c.Check(rsp.Type, Equals, agent.ResponseTypeError)
+	c.Check(rsp.Result, DeepEquals, map[string]interface{}{
+		"message": "cannot restart non-snap service not-snap.bar.service",
+	})
+
+	// No services were started on the error.
+	c.Check(s.sysdLog, HasLen, 0)
+}
+
+func (s *restSuite) TestServicesRestartOrReloadReportsError(c *C) {
+	var sysdLog [][]string
+	restore := systemd.MockSystemctl(func(cmd ...string) ([]byte, error) {
+		// Ignore "show" spam
+		if cmd[1] != "show" {
+			sysdLog = append(sysdLog, cmd)
+		}
+		if cmd[len(cmd)-1] == "snap.bar.service" {
+			return []byte("ActiveState=active\n"), errors.New("mock systemctl error")
+		}
+		return []byte("ActiveState=inactive\n"), nil
+	})
+	defer restore()
+
+	req := httptest.NewRequest("POST", "/v1/service-control", bytes.NewBufferString(`{"action":"reload-or-restart","services":["snap.foo.service", "snap.bar.service"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	agent.ServiceControlCmd.POST(agent.ServiceControlCmd, req).ServeHTTP(rec, req)
+	c.Check(rec.Code, Equals, 500)
+	c.Check(rec.Header().Get("Content-Type"), Equals, "application/json")
+
+	var rsp resp
+	c.Assert(json.Unmarshal(rec.Body.Bytes(), &rsp), IsNil)
+	c.Check(rsp.Type, Equals, agent.ResponseTypeError)
+	c.Check(rsp.Result, DeepEquals, map[string]interface{}{
+		"kind":    "service-control",
+		"message": "some user services failed to reload or restart",
+		"value": map[string]interface{}{
+			"restart-errors": map[string]interface{}{
+				"snap.bar.service": "mock systemctl error",
+			},
+		},
+	})
+
+	c.Check(sysdLog, DeepEquals, [][]string{
+		{"--user", "reload-or-restart", "snap.foo.service"},
+		{"--user", "reload-or-restart", "snap.bar.service"},
+	})
+}
+
+func (s *restSuite) TestServicesStatus(c *C) {
+	var sysdLog [][]string
+	restore := systemd.MockSystemctl(func(cmd ...string) ([]byte, error) {
+		sysdLog = append(sysdLog, cmd)
+		return []byte(`Type=notify
+Id=snap.foo.service
+Names=snap.foo.service
+ActiveState=inactive
+UnitFileState=enabled
+NeedDaemonReload=no
+
+Type=notify
+Id=snap.bar.service
+Names=snap.bar.service
+ActiveState=inactive
+UnitFileState=enabled
+NeedDaemonReload=no
+`), nil
+	})
+	defer restore()
+
+	req := httptest.NewRequest("GET", "/v1/service-status?services=snap.foo.service,snap.bar.service", nil)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	agent.ServiceStatusCmd.GET(agent.ServiceStatusCmd, req).ServeHTTP(rec, req)
+	c.Check(rec.Code, Equals, 200)
+	c.Check(rec.Header().Get("Content-Type"), Equals, "application/json")
+
+	var rsp resp
+	c.Assert(json.Unmarshal(rec.Body.Bytes(), &rsp), IsNil)
+	c.Check(rsp.Type, Equals, agent.ResponseTypeSync)
+	c.Check(rsp.Result, DeepEquals, []interface{}{
+		map[string]interface{}{
+			"active":    false,
+			"daemon":    "notify",
+			"enabled":   true,
+			"id":        "snap.foo.service",
+			"installed": true,
+			"name":      "snap.foo.service",
+			"names": []interface{}{
+				"snap.foo.service",
+			},
+			"needs-reload": false,
+		},
+		map[string]interface{}{
+			"active":    false,
+			"daemon":    "notify",
+			"enabled":   true,
+			"id":        "snap.bar.service",
+			"installed": true,
+			"name":      "snap.bar.service",
+			"names": []interface{}{
+				"snap.bar.service",
+			},
+			"needs-reload": false,
+		},
+	})
+
+	c.Check(sysdLog, DeepEquals, [][]string{
+		{"--user", "show", "--property=Id,ActiveState,UnitFileState,Type,Names,NeedDaemonReload", "snap.foo.service", "snap.bar.service"},
+	})
+}
+
+func (s *restSuite) TestServiceStatusNonSnap(c *C) {
+	req := httptest.NewRequest("GET", "/v1/service-status?services=not-snap.bar.service", nil)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	agent.ServiceStatusCmd.GET(agent.ServiceStatusCmd, req).ServeHTTP(rec, req)
+	c.Check(rec.Code, Equals, 500)
+	c.Check(rec.Header().Get("Content-Type"), Equals, "application/json")
+
+	var rsp resp
+	c.Assert(json.Unmarshal(rec.Body.Bytes(), &rsp), IsNil)
+	c.Check(rsp.Type, Equals, agent.ResponseTypeError)
+	c.Check(rsp.Result, DeepEquals, map[string]interface{}{
+		"message": "cannot query non-snap service not-snap.bar.service",
+	})
+
+	// No services were started on the error.
+	c.Check(s.sysdLog, HasLen, 0)
+}
+
+func (s *restSuite) TestServicesStatusReportsError(c *C) {
+	var sysdLog [][]string
+	restore := systemd.MockSystemctl(func(cmd ...string) ([]byte, error) {
+		sysdLog = append(sysdLog, cmd)
+		return []byte("ActiveState=active\n"), errors.New("mock systemctl error")
+	})
+	defer restore()
+
+	req := httptest.NewRequest("GET", "/v1/service-status?services=snap.foo.service,snap.bar.service", nil)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	agent.ServiceStatusCmd.GET(agent.ServiceStatusCmd, req).ServeHTTP(rec, req)
+	c.Check(rec.Code, Equals, 500)
+	c.Check(rec.Header().Get("Content-Type"), Equals, "application/json")
+
+	var rsp resp
+	c.Assert(json.Unmarshal(rec.Body.Bytes(), &rsp), IsNil)
+	c.Check(rsp.Type, Equals, agent.ResponseTypeError)
+	c.Check(rsp.Result, DeepEquals, map[string]interface{}{
+		"kind":    "service-status",
+		"message": "cannot retrieve status for service: mock systemctl error",
+	})
+
+	c.Check(sysdLog, DeepEquals, [][]string{
+		{"--user", "show", "--property=Id,ActiveState,UnitFileState,Type,Names,NeedDaemonReload", "snap.foo.service", "snap.bar.service"},
+	})
+}
+
 func (s *restSuite) TestPostPendingRefreshNotificationMalformedContentType(c *C) {
 	req := httptest.NewRequest("POST", "/v1/notifications/pending-refresh", bytes.NewBufferString(""))
 	req.Header.Set("Content-Type", "text/plain/joke")
