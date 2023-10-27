@@ -1194,7 +1194,7 @@ func RestartServices(apps []*snap.AppInfo, explicitServices []string,
 				users = append(users, uids[uid])
 			}
 
-			// Create a new client, only targetting that user
+			// Create a new client, only targeting that user
 			cli, err := newUserServiceClient(users, inter)
 			if err != nil {
 				return err
