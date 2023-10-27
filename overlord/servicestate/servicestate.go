@@ -43,8 +43,10 @@ import (
 )
 
 type Instruction struct {
-	Action string   `json:"action"`
-	Names  []string `json:"names"`
+	Action          string   `json:"action"`
+	Names           []string `json:"names"`
+	Scope           []string `json:"scope"`
+	ServicesOfUsers []string `json:"user-services-of"`
 	client.StartOptions
 	client.StopOptions
 	client.RestartOptions
@@ -74,6 +76,29 @@ func computeExplicitServices(appInfos []*snap.AppInfo, names []string) map[strin
 	return explicitServices
 }
 
+func scopesToServiceScope(scopes []string) (wrappers.ServiceScope, error) {
+	var sysScope, userScope bool
+	for _, sc := range scopes {
+		switch sc {
+		case "system":
+			sysScope = true
+		case "user":
+			userScope = true
+		default:
+			return wrappers.ServiceScopeAll, fmt.Errorf("unrecognized scope for services: %q", sc)
+		}
+	}
+	switch {
+	case sysScope && userScope:
+		return wrappers.ServiceScopeAll, nil
+	case sysScope:
+		return wrappers.ServiceScopeSystem, nil
+	case userScope:
+		return wrappers.ServiceScopeUser, nil
+	}
+	return wrappers.ServiceScopeAll, nil
+}
+
 // serviceControlTs creates "service-control" task for every snap derived from appInfos.
 func serviceControlTs(st *state.State, appInfos []*snap.AppInfo, inst *Instruction) (*state.TaskSet, error) {
 	servicesBySnap := make(map[string][]string, len(appInfos))
@@ -101,7 +126,16 @@ func serviceControlTs(st *state.State, appInfos []*snap.AppInfo, inst *Instructi
 			return nil, err
 		}
 
-		cmd := &ServiceAction{SnapName: snapName}
+		scope, err := scopesToServiceScope(inst.Scope)
+		if err != nil {
+			return nil, err
+		}
+
+		cmd := &ServiceAction{
+			SnapName: snapName,
+			Scope:    scope,
+			Users:    inst.ServicesOfUsers,
+		}
 		switch {
 		case inst.Action == "start":
 			cmd.Action = "start"
