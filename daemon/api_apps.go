@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/user"
 	"sort"
 	"strconv"
 	"strings"
@@ -224,7 +225,7 @@ func getLogs(c *Command, r *http.Request, user *auth.UserState) Response {
 
 var servicestateControl = servicestate.Control
 
-func decodeServiceInstruction(body io.ReadCloser, user *auth.UserState) (*servicestate.Instruction, error) {
+func decodeServiceInstruction(body io.ReadCloser, u *user.User) (*servicestate.Instruction, error) {
 	var inst servicestate.Instruction
 	decoder := json.NewDecoder(body)
 	if err := decoder.Decode(&inst); err != nil {
@@ -232,8 +233,7 @@ func decodeServiceInstruction(body io.ReadCloser, user *auth.UserState) (*servic
 	}
 	if len(inst.ServicesOfUsers) == 0 {
 		// If root is making this request, then implied users are all
-		// XXX: Right now this counts for user == nil as well
-		if user == nil || user.ID == 0 {
+		if u == nil || u.Uid == "0" {
 			inst.ServicesOfUsers = append(inst.ServicesOfUsers, "users")
 		}
 	} else {
@@ -242,11 +242,13 @@ func decodeServiceInstruction(body io.ReadCloser, user *auth.UserState) (*servic
 		var updated []string
 		for _, name := range inst.ServicesOfUsers {
 			if name == "user" {
-				// If no user is logged in, we ignore it right now
-				// XXX: Throw error?
-				if user != nil {
-					updated = append(updated, user.Username)
+				// Reference to the current user, if the user is root this not valid
+				// as root users should only use 'users' for all, or provide a list
+				// of user names
+				if u == nil || u.Uid == "0" {
+					return nil, fmt.Errorf("cannot use \"user\" in a root user context for service operations")
 				}
+				updated = append(updated, u.Username)
 			} else {
 				updated = append(updated, name)
 			}
@@ -265,11 +267,19 @@ func hasUserService(apps []*snap.AppInfo) bool {
 	return false
 }
 
-func validateScopeAgainstApps(inst *servicestate.Instruction, user *auth.UserState, apps []*snap.AppInfo) error {
+var systemUserFromRequest = func(r *http.Request) (*user.User, error) {
+	ucreds, err := ucrednetGet(r.RemoteAddr)
+	if err != nil || ucreds == nil {
+		return nil, err
+	}
+	return user.LookupId(strconv.Itoa(int(ucreds.Uid)))
+}
+
+func validateScopeAgainstApps(inst *servicestate.Instruction, u *user.User, apps []*snap.AppInfo) error {
 	// Set default scopes if not provided
 	if len(inst.Scope) == 0 {
 		// If root is making this request, implied scopes are all
-		if user == nil || user.ID == 0 {
+		if u == nil || u.Uid == "0" {
 			inst.Scope = append(inst.Scope, "system", "user")
 		} else {
 			// It is in an error for non-root not to specify a scope, if we're targeting a
@@ -284,11 +294,11 @@ func validateScopeAgainstApps(inst *servicestate.Instruction, user *auth.UserSta
 	return nil
 }
 
-func validateUsersAgainstApps(inst *servicestate.Instruction, user *auth.UserState, apps []*snap.AppInfo) error {
+func validateUsersAgainstApps(inst *servicestate.Instruction, u *user.User, apps []*snap.AppInfo) error {
 	// Verify the user
 	if len(inst.ServicesOfUsers) == 0 {
 		// If root is making this request, then implied users are all
-		if user != nil && user.ID != 0 {
+		if u != nil && u.Uid != "0" {
 			// It is an error for a non-root to not specify anything if we are targeting
 			// user daemons
 			if hasUserService(apps) {
@@ -300,7 +310,11 @@ func validateUsersAgainstApps(inst *servicestate.Instruction, user *auth.UserSta
 }
 
 func postApps(c *Command, r *http.Request, user *auth.UserState) Response {
-	inst, err := decodeServiceInstruction(r.Body, user)
+	u, err := systemUserFromRequest(r)
+	if err != nil {
+		return BadRequest("cannot perform operation on services: %v", err)
+	}
+	inst, err := decodeServiceInstruction(r.Body, u)
 	if err != nil {
 		return BadRequest("cannot decode request body into service operation: %v", err)
 	}
@@ -322,10 +336,10 @@ func postApps(c *Command, r *http.Request, user *auth.UserState) Response {
 	}
 
 	// Now that we know the services we are affecting, do some additional checks/fixups
-	if err := validateScopeAgainstApps(inst, user, appInfos); err != nil {
+	if err := validateScopeAgainstApps(inst, u, appInfos); err != nil {
 		return BadRequest("cannot perform operation on services: %v", err)
 	}
-	if err := validateUsersAgainstApps(inst, user, appInfos); err != nil {
+	if err := validateUsersAgainstApps(inst, u, appInfos); err != nil {
 		return BadRequest("cannot perform operation on services: %v", err)
 	}
 

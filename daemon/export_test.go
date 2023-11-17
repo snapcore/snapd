@@ -22,6 +22,7 @@ package daemon
 import (
 	"context"
 	"net/http"
+	"os/user"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -354,5 +355,11 @@ func MockAspectstateSet(f func(databag aspects.DataBag, account, bundleName, asp
 func MockRebootNoticeWait(d time.Duration) (restore func()) {
 	restore = testutil.Backup(&rebootNoticeWait)
 	rebootNoticeWait = d
+	return restore
+}
+
+func MockSystemUserFromRequest(f func(r *http.Request) (*user.User, error)) (restore func()) {
+	restore = testutil.Backup(&systemUserFromRequest)
+	systemUserFromRequest = f
 	return restore
 }

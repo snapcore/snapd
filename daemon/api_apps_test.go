@@ -617,18 +617,32 @@ func (s *appsSuite) TestPostAppsDisableNow(c *check.C) {
 	s.testPostApps(c, inst, expected)
 }
 
-func (s *appsSuite) TestPostAppsScopes(c *check.C) {
+func (s *appsSuite) TestPostAppsScopesUserAsRootNotAlllowed(c *check.C) {
 	inst := servicestate.Instruction{Action: "start", Names: []string{"snap-a.svc1"}, Scope: []string{"user"}, ServicesOfUsers: []string{"user"}}
+	postBody, err := json.Marshal(inst)
+	c.Assert(err, check.IsNil)
+
+	req, err := http.NewRequest("POST", "/v2/apps", bytes.NewBuffer(postBody))
+	c.Assert(err, check.IsNil)
+
+	rspe := s.errorReq(c, req, s.authUser)
+	c.Check(rspe.Status, check.Equals, 400)
+	c.Check(rspe.Message, check.Matches, ".*cannot use \"user\" in a root user context for service operations.*")
+}
+
+func (s *appsSuite) TestPostAppsUsersAsRootHappy(c *check.C) {
+	inst := servicestate.Instruction{Action: "start", Names: []string{"snap-a.svc1"}, Scope: []string{"user"}, ServicesOfUsers: []string{"users"}}
 	expected := []serviceControlArgs{
-		{action: "start", names: []string{"snap-a.svc1"}, scope: []string{"user"}},
+		// Expect no user to appear as we are not logged in
+		{action: "start", names: []string{"snap-a.svc1"}, scope: []string{"user"}, users: []string{"users"}},
 	}
 	s.testPostApps(c, inst, expected)
 }
 
 func (s *appsSuite) TestPostAppsScopesNotSpecifiedForRoot(c *check.C) {
-	inst := servicestate.Instruction{Action: "start", Names: []string{"snap-e.svc4"}, ServicesOfUsers: []string{"user"}}
+	inst := servicestate.Instruction{Action: "start", Names: []string{"snap-e.svc4"}, ServicesOfUsers: []string{"users"}}
 	expected := []serviceControlArgs{
-		{action: "start", names: []string{"snap-e.svc4"}, scope: []string{"system", "user"}},
+		{action: "start", names: []string{"snap-e.svc4"}, scope: []string{"system", "user"}, users: []string{"users"}},
 	}
 	s.testPostApps(c, inst, expected)
 }
@@ -638,14 +652,6 @@ func (s *appsSuite) TestPostAppsScopesNotSpecifiedForUser(c *check.C) {
 	s.testPostAppsUser(c, inst, nil, "cannot perform operation on services: a service scope must be provided for the specified services")
 }
 
-func (s *appsSuite) TestPostAppsUsers(c *check.C) {
-	inst := servicestate.Instruction{Action: "start", Names: []string{"snap-a.svc1"}, ServicesOfUsers: []string{"users"}}
-	expected := []serviceControlArgs{
-		// Expect no user to appear as we are not logged in
-		{action: "start", names: []string{"snap-a.svc1"}, scope: []string{"system", "user"}, users: []string{"users"}},
-	}
-	s.testPostApps(c, inst, expected)
-}
 func (s *appsSuite) TestPostAppsUsersUser(c *check.C) {
 	inst := servicestate.Instruction{Action: "start", Names: []string{"snap-a.svc1"}, ServicesOfUsers: []string{"user"}}
 	expected := []serviceControlArgs{
@@ -653,15 +659,6 @@ func (s *appsSuite) TestPostAppsUsersUser(c *check.C) {
 		{action: "start", names: []string{"snap-a.svc1"}, scope: []string{"system"}, users: []string{"username"}},
 	}
 	s.testPostAppsUser(c, inst, expected, "")
-}
-
-func (s *appsSuite) TestPostAppsUsersUserWithoutUser(c *check.C) {
-	inst := servicestate.Instruction{Action: "start", Names: []string{"snap-a.svc1"}, ServicesOfUsers: []string{"user"}}
-	expected := []serviceControlArgs{
-		// Expect no user to appear as we are not logged in
-		{action: "start", names: []string{"snap-a.svc1"}, scope: []string{"system", "user"}},
-	}
-	s.testPostApps(c, inst, expected)
 }
 
 func (s *appsSuite) TestPostAppsUsersWithUsernames(c *check.C) {
