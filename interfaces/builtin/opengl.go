@@ -248,6 +248,8 @@ var openglConnectedPlugUDev = []string{
 	`KERNEL=="galcore"`,
 	`KERNEL=="kgsl-3d0"`,
 	`KERNEL=="ion"`,
+	`KERNEL=="binder"`,
+	`KERNEL=="hwbinder"`,
 }
 
 // Those two are the same, but in theory they are separate and can move (or
