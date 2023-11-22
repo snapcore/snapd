@@ -110,19 +110,6 @@ func userSessionQueryServiceStatusMany(units []string) (map[int][]client.UserSer
 	return cli.ServiceStatus(ctx, units)
 }
 
-func clientUnitStatusToSystemdUnitStatus(unitStatus client.UserServiceUnitStatus) *systemd.UnitStatus {
-	return &systemd.UnitStatus{
-		Daemon:           unitStatus.Daemon,
-		Id:               unitStatus.Id,
-		Name:             unitStatus.Name,
-		Names:            unitStatus.Names,
-		Enabled:          unitStatus.Enabled,
-		Active:           unitStatus.Active,
-		Installed:        unitStatus.Installed,
-		NeedDaemonReload: unitStatus.NeedDaemonReload,
-	}
-}
-
 func queryUserServiceStatusMany(apps []*snap.AppInfo, units []string) (map[int][]*ServiceStatus, error) {
 	usrUnitStss, err := userSessionQueryServiceStatusMany(units)
 	if err != nil {
@@ -134,12 +121,12 @@ func queryUserServiceStatusMany(apps []*snap.AppInfo, units []string) (map[int][
 		svcSt := &ServiceStatus{
 			name:        app.Name,
 			user:        true,
-			service:     clientUnitStatusToSystemdUnitStatus(usrUnitStss[uid][usrIndex]),
+			service:     usrUnitStss[uid][usrIndex].SystemdUnitStatus(),
 			slotEnabled: serviceIsSlotActivated(app),
 		}
 		if len(activators) > 0 {
 			for _, u := range usrUnitStss[uid][usrIndex+1 : usrIndex+1+len(activators)] {
-				svcSt.activators = append(svcSt.activators, clientUnitStatusToSystemdUnitStatus(u))
+				svcSt.activators = append(svcSt.activators, u.SystemdUnitStatus())
 			}
 		}
 		usrIndex += 1 + len(activators)
