@@ -56,7 +56,6 @@ var (
 
 func getAppsInfo(c *Command, r *http.Request, user *auth.UserState) Response {
 	query := r.URL.Query()
-
 	opts := appInfoOptions{}
 	switch sel := query.Get("select"); sel {
 	case "":
@@ -67,13 +66,31 @@ func getAppsInfo(c *Command, r *http.Request, user *auth.UserState) Response {
 		return BadRequest("invalid select parameter: %q", sel)
 	}
 
+	var global bool
+	if sel := query.Get("global"); sel != "" {
+		if g, err := strconv.ParseBool(sel); err != nil {
+			return BadRequest("invalid global parameter: %q", sel)
+		} else {
+			global = g
+		}
+	}
+
 	appInfos, rspe := appInfosFor(c.d.overlord.State(), strutil.CommaSeparatedList(query.Get("names")), opts)
 	if rspe != nil {
 		return rspe
 	}
 
-	sd := servicestate.NewStatusDecorator(progress.Null)
+	u, err := systemUserFromRequest(r)
+	if err != nil {
+		return BadRequest("cannot retrieve services: %v", err)
+	}
 
+	var sd *servicestate.StatusDecorator
+	if (u == nil || u.Uid == "0") || global {
+		sd = servicestate.NewStatusDecorator(progress.Null)
+	} else {
+		sd = servicestate.NewStatusDecoratorForUid(progress.Null, r.Context(), u.Uid)
+	}
 	clientAppInfos, err := clientutil.ClientAppInfosFromSnapAppInfos(appInfos, sd)
 	if err != nil {
 		return InternalError("%v", err)

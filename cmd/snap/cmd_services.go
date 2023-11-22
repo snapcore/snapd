@@ -36,6 +36,7 @@ type svcStatus struct {
 	Positional struct {
 		ServiceNames []serviceName
 	} `positional-args:"yes"`
+	Global bool `long:"global" short:"g"`
 }
 
 type svcLogs struct {
@@ -83,7 +84,10 @@ func init() {
 		// TRANSLATORS: This should not start with a lowercase letter.
 		desc: i18n.G("A service specification, which can be just a snap name (for all services in the snap), or <snap>.<app> for a single service."),
 	}}
-	addCommand("services", shortServicesHelp, longServicesHelp, func() flags.Commander { return &svcStatus{} }, nil, argdescs)
+	addCommand("services", shortServicesHelp, longServicesHelp, func() flags.Commander { return &svcStatus{} }, map[string]string{
+		// TRANSLATORS: This should not start with a lowercase letter.
+		"global": i18n.G("Show the global enable status for user-services instead of the status for the current user."),
+	}, argdescs)
 	addCommand("logs", shortLogsHelp, longLogsHelp, func() flags.Commander { return &svcLogs{} },
 		timeDescs.also(map[string]string{
 			// TRANSLATORS: This should not start with a lowercase letter.
@@ -140,7 +144,15 @@ func (s *svcStatus) Execute(args []string) error {
 		return ErrExtraArgs
 	}
 
-	services, err := s.client.Apps(svcNames(s.Positional.ServiceNames), client.AppOptions{Service: true})
+	u, err := userCurrent()
+	if err != nil {
+		return fmt.Errorf(i18n.G("cannot get the current user: %s"), err)
+	}
+
+	services, err := s.client.Apps(svcNames(s.Positional.ServiceNames), client.AppOptions{
+		Service: true,
+		Global:  s.Global,
+	})
 	if err != nil {
 		return err
 	}
@@ -161,7 +173,9 @@ func (s *svcStatus) Execute(args []string) error {
 			startup = i18n.G("enabled")
 		}
 		current := i18n.G("inactive")
-		if svc.DaemonScope == snap.UserDaemon {
+		if svc.DaemonScope == snap.UserDaemon && (u.Uid == "0" || s.Global) {
+			// When requesting global service status, we don't have any active
+			// information available for user daemons.
 			current = "-"
 		} else if svc.Active {
 			current = i18n.G("active")
