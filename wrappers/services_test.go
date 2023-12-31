@@ -4808,6 +4808,138 @@ apps:
 	})
 }
 
+func (s *servicesTestSuite) TestReloadOrRestartButNotInRightScope(c *C) {
+	const surviveYaml = `name: test-snap
+version: 1.0
+apps:
+  foo:
+    command: bin/foo
+    daemon: simple
+`
+	info := snaptest.MockSnap(c, surviveYaml, &snap.SideInfo{Revision: snap.R(1)})
+	srvFile := "snap.test-snap.foo.service"
+
+	r := systemd.MockSystemctl(func(cmd ...string) ([]byte, error) {
+		s.sysdLog = append(s.sysdLog, cmd)
+		if out := systemdtest.HandleMockAllUnitsActiveOutput(cmd, nil); out != nil {
+			return out, nil
+		}
+		return []byte("ActiveState=inactive\n"), nil
+	})
+	defer r()
+
+	err := s.addSnapServices(info, false)
+	c.Assert(err, IsNil)
+
+	flags := wrappers.RestartServicesFlags{Scope: wrappers.ServiceScopeUser}
+	c.Assert(wrappers.RestartServices(info.Services(), nil, &flags, progress.Null, s.perfTimings), IsNil)
+	c.Assert(err, IsNil)
+	c.Check(s.sysdLog, DeepEquals, [][]string{
+		// Only invocations from querying status
+		{"daemon-reload"},
+		{"show", "--property=Id,ActiveState,UnitFileState,Type,Names,NeedDaemonReload", srvFile},
+	})
+}
+
+func (s *servicesTestSuite) TestReloadOrRestartUserDaemons(c *C) {
+	const surviveYaml = `name: test-snap
+version: 1.0
+apps:
+  foo:
+    command: bin/foo
+    daemon: simple
+    daemon-scope: user
+`
+	info := snaptest.MockSnap(c, surviveYaml, &snap.SideInfo{Revision: snap.R(1)})
+	srvFile := "snap.test-snap.foo.service"
+
+	r := systemd.MockSystemctl(func(cmd ...string) ([]byte, error) {
+		s.sysdLog = append(s.sysdLog, cmd)
+		if out := systemdtest.HandleMockAllUnitsActiveOutput(cmd, nil); out != nil {
+			return out, nil
+		}
+		return []byte(`Type=notify
+Id=snap.test-snap.foo.service
+Names=snap.test-snap.foo.service
+ActiveState=inactive
+UnitFileState=enabled
+NeedDaemonReload=no
+`), nil
+	})
+	defer r()
+
+	err := s.addSnapServices(info, false)
+	c.Assert(err, IsNil)
+
+	s.sysdLog = nil
+	flags := wrappers.RestartServicesFlags{Reload: true, AlsoEnabledNonActive: true}
+	c.Assert(wrappers.RestartServices(info.Services(), nil, &flags, progress.Null, s.perfTimings), IsNil)
+	c.Assert(err, IsNil)
+	c.Check(s.sysdLog, DeepEquals, [][]string{
+		{"--user", "show", "--property=Id,ActiveState,UnitFileState,Type,Names,NeedDaemonReload", srvFile},
+		{"--user", "reload-or-restart", srvFile},
+	})
+
+	s.sysdLog = nil
+	flags.Reload = false
+	c.Assert(wrappers.RestartServices(info.Services(), nil, &flags, progress.Null, s.perfTimings), IsNil)
+	c.Check(s.sysdLog, DeepEquals, [][]string{
+		{"--user", "show", "--property=Id,ActiveState,UnitFileState,Type,Names,NeedDaemonReload", srvFile},
+		{"--user", "stop", srvFile},
+		{"--user", "show", "--property=ActiveState", srvFile},
+		{"--user", "start", srvFile},
+	})
+
+	s.sysdLog = nil
+	c.Assert(wrappers.RestartServices(info.Services(), nil, &wrappers.RestartServicesFlags{AlsoEnabledNonActive: true}, progress.Null, s.perfTimings), IsNil)
+	c.Check(s.sysdLog, DeepEquals, [][]string{
+		{"--user", "show", "--property=Id,ActiveState,UnitFileState,Type,Names,NeedDaemonReload", srvFile},
+		{"--user", "stop", srvFile},
+		{"--user", "show", "--property=ActiveState", srvFile},
+		{"--user", "start", srvFile},
+	})
+}
+
+func (s *servicesTestSuite) TestReloadOrRestartUserDaemonsButSystemScope(c *C) {
+	const surviveYaml = `name: test-snap
+version: 1.0
+apps:
+  foo:
+    command: bin/foo
+    daemon: simple
+    daemon-scope: user
+`
+	info := snaptest.MockSnap(c, surviveYaml, &snap.SideInfo{Revision: snap.R(1)})
+	srvFile := "snap.test-snap.foo.service"
+
+	r := systemd.MockSystemctl(func(cmd ...string) ([]byte, error) {
+		s.sysdLog = append(s.sysdLog, cmd)
+		if out := systemdtest.HandleMockAllUnitsActiveOutput(cmd, nil); out != nil {
+			return out, nil
+		}
+		return []byte(`Type=notify
+Id=snap.test-snap.foo.service
+Names=snap.test-snap.foo.service
+ActiveState=inactive
+UnitFileState=enabled
+NeedDaemonReload=no
+`), nil
+	})
+	defer r()
+
+	err := s.addSnapServices(info, false)
+	c.Assert(err, IsNil)
+
+	flags := wrappers.RestartServicesFlags{Scope: wrappers.ServiceScopeSystem}
+	c.Assert(wrappers.RestartServices(info.Services(), []string{srvFile}, &flags, progress.Null, s.perfTimings), IsNil)
+	c.Assert(err, IsNil)
+	c.Check(s.sysdLog, DeepEquals, [][]string{
+		// Those comes from querying status of services
+		{"--user", "daemon-reload"},
+		{"--user", "show", "--property=Id,ActiveState,UnitFileState,Type,Names,NeedDaemonReload", srvFile},
+	})
+}
+
 func (s *servicesTestSuite) TestRestartInDifferentStates(c *C) {
 	const manyServicesYaml = `name: test-snap
 version: 1.0

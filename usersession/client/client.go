@@ -31,10 +31,12 @@ import (
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/snapcore/snapd/dirs"
+	"github.com/snapcore/snapd/systemd"
 )
 
 // dialSessionAgent connects to a user's session agent
@@ -280,10 +282,14 @@ func (client *Client) serviceControlCall(ctx context.Context, action string, ser
 	for _, resp := range responses {
 		if agentErr, ok := resp.err.(*Error); ok && agentErr.Kind == "service-control" {
 			if errorValue, ok := agentErr.Value.(map[string]interface{}); ok {
-				failures, _ := decodeServiceErrors(resp.uid, errorValue, "start-errors")
-				startFailures = append(startFailures, failures...)
-				failures, _ = decodeServiceErrors(resp.uid, errorValue, "stop-errors")
-				stopFailures = append(stopFailures, failures...)
+				if failures, err := decodeServiceErrors(resp.uid, errorValue, "restart-errors"); err == nil && len(failures) > 0 {
+					startFailures = append(startFailures, failures...)
+				} else {
+					failures, _ := decodeServiceErrors(resp.uid, errorValue, "start-errors")
+					startFailures = append(startFailures, failures...)
+					failures, _ = decodeServiceErrors(resp.uid, errorValue, "stop-errors")
+					stopFailures = append(stopFailures, failures...)
+				}
 			}
 		}
 		if resp.err != nil && err == nil {
@@ -305,6 +311,72 @@ func (client *Client) ServicesStart(ctx context.Context, services []string) (sta
 func (client *Client) ServicesStop(ctx context.Context, services []string) (stopFailures []ServiceFailure, err error) {
 	_, stopFailures, err = client.serviceControlCall(ctx, "stop", services)
 	return stopFailures, err
+}
+
+func (client *Client) ServicesRestart(ctx context.Context, services []string) (restartFailures []ServiceFailure, err error) {
+	restartFailures, _, err = client.serviceControlCall(ctx, "restart", services)
+	return restartFailures, err
+}
+
+func (client *Client) ServicesReloadOrRestart(ctx context.Context, services []string) (restartFailures []ServiceFailure, err error) {
+	restartFailures, _, err = client.serviceControlCall(ctx, "reload-or-restart", services)
+	return restartFailures, err
+}
+
+// UserServiceUnitStatus corresponds to the systemd.UnitStatus in order to be able
+// to reliable transport the data we need surrounding the members we are interested in
+// from systemd.UnitStatus
+type UserServiceUnitStatus struct {
+	Daemon           string   `json:"daemon"`
+	Id               string   `json:"id"`
+	Name             string   `json:"name"`
+	Names            []string `json:"names"`
+	Enabled          bool     `json:"enabled"`
+	Active           bool     `json:"active"`
+	Installed        bool     `json:"installed"`
+	NeedDaemonReload bool     `json:"needs-reload"`
+}
+
+func (us *UserServiceUnitStatus) SystemdUnitStatus() *systemd.UnitStatus {
+	return &systemd.UnitStatus{
+		Daemon:           us.Daemon,
+		Id:               us.Id,
+		Name:             us.Name,
+		Names:            us.Names,
+		Enabled:          us.Enabled,
+		Active:           us.Active,
+		Installed:        us.Installed,
+		NeedDaemonReload: us.NeedDaemonReload,
+	}
+}
+
+func (client *Client) ServiceStatus(ctx context.Context, services []string) (map[int][]UserServiceUnitStatus, error) {
+	q := make(url.Values)
+	q.Add("services", strings.Join(services, ","))
+
+	responses, err := client.doMany(ctx, "GET", "/v1/service-status", q, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	info := make(map[int][]UserServiceUnitStatus)
+	for _, resp := range responses {
+		if resp.err != nil {
+			if err == nil {
+				err = resp.err
+			}
+			continue
+		}
+		var si []UserServiceUnitStatus
+		if decodeErr := json.Unmarshal(resp.Result, &si); decodeErr != nil {
+			if err == nil {
+				err = decodeErr
+			}
+			continue
+		}
+		info[resp.uid] = si
+	}
+	return info, err
 }
 
 // PendingSnapRefreshInfo holds information about pending snap refresh provided to userd.

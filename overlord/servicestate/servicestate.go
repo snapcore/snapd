@@ -20,15 +20,17 @@
 package servicestate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/snapcore/snapd/client"
+	snapdclient "github.com/snapcore/snapd/client"
 	"github.com/snapcore/snapd/overlord/cmdstate"
 	"github.com/snapcore/snapd/overlord/configstate/config"
 	"github.com/snapcore/snapd/overlord/hookstate"
@@ -39,15 +41,18 @@ import (
 	"github.com/snapcore/snapd/snap/quota"
 	"github.com/snapcore/snapd/strutil"
 	"github.com/snapcore/snapd/systemd"
+	"github.com/snapcore/snapd/usersession/client"
 	"github.com/snapcore/snapd/wrappers"
 )
 
 type Instruction struct {
-	Action string   `json:"action"`
-	Names  []string `json:"names"`
-	client.StartOptions
-	client.StopOptions
-	client.RestartOptions
+	Action          string   `json:"action"`
+	Names           []string `json:"names"`
+	Scope           []string `json:"scope"`
+	ServicesOfUsers []string `json:"user-services-of"`
+	snapdclient.StartOptions
+	snapdclient.StopOptions
+	snapdclient.RestartOptions
 }
 
 type ServiceActionConflictError struct{ error }
@@ -72,6 +77,29 @@ func computeExplicitServices(appInfos []*snap.AppInfo, names []string) map[strin
 	}
 
 	return explicitServices
+}
+
+func scopesToServiceScope(scopes []string) (wrappers.ServiceScope, error) {
+	var sysScope, userScope bool
+	for _, sc := range scopes {
+		switch sc {
+		case "system":
+			sysScope = true
+		case "user":
+			userScope = true
+		default:
+			return wrappers.ServiceScopeAll, fmt.Errorf("unrecognized scope for services: %q", sc)
+		}
+	}
+	switch {
+	case sysScope && userScope:
+		return wrappers.ServiceScopeAll, nil
+	case sysScope:
+		return wrappers.ServiceScopeSystem, nil
+	case userScope:
+		return wrappers.ServiceScopeUser, nil
+	}
+	return wrappers.ServiceScopeAll, nil
 }
 
 // serviceControlTs creates "service-control" task for every snap derived from appInfos.
@@ -101,7 +129,16 @@ func serviceControlTs(st *state.State, appInfos []*snap.AppInfo, inst *Instructi
 			return nil, err
 		}
 
-		cmd := &ServiceAction{SnapName: snapName}
+		scope, err := scopesToServiceScope(inst.Scope)
+		if err != nil {
+			return nil, err
+		}
+
+		cmd := &ServiceAction{
+			SnapName: snapName,
+			Scope:    scope,
+			Users:    inst.ServicesOfUsers,
+		}
 		switch {
 		case inst.Action == "start":
 			cmd.Action = "start"
@@ -255,6 +292,8 @@ func Control(st *state.State, appInfos []*snap.AppInfo, inst *Instruction, flags
 type StatusDecorator struct {
 	sysd           systemd.Systemd
 	globalUserSysd systemd.Systemd
+	context        context.Context
+	uid            string
 }
 
 // NewStatusDecorator returns a new StatusDecorator.
@@ -267,7 +306,18 @@ func NewStatusDecorator(rep interface {
 	}
 }
 
-func (sd *StatusDecorator) hasEnabledActivator(appInfo *client.AppInfo) bool {
+func NewStatusDecoratorForUid(rep interface {
+	Notify(string)
+}, context context.Context, uid string) *StatusDecorator {
+	return &StatusDecorator{
+		sysd:           systemd.New(systemd.SystemMode, rep),
+		globalUserSysd: systemd.New(systemd.GlobalUserMode, rep),
+		context:        context,
+		uid:            uid,
+	}
+}
+
+func (sd *StatusDecorator) hasEnabledActivator(appInfo *snapdclient.AppInfo) bool {
 	// Just one activator should be enabled in order for the service to be able
 	// to become enabled. For slot activated services this is always true as we
 	// have no way currently of disabling this.
@@ -279,25 +329,66 @@ func (sd *StatusDecorator) hasEnabledActivator(appInfo *client.AppInfo) bool {
 	return false
 }
 
+func (sd *StatusDecorator) queryUserServiceStatus(units []string) ([]*systemd.UnitStatus, error) {
+	// Avoid any expensive call if there are no user daemons
+	if len(units) == 0 {
+		return nil, nil
+	}
+
+	uid, err := strconv.Atoi(sd.uid)
+	if err != nil {
+		return nil, err
+	}
+
+	cli := client.NewForUids(uid)
+	stss, err := cli.ServiceStatus(sd.context, units)
+	if err != nil {
+		return nil, err
+	}
+
+	var sysdStatuses []*systemd.UnitStatus
+	for _, sts := range stss[uid] {
+		sysdStatuses = append(sysdStatuses, sts.SystemdUnitStatus())
+	}
+	return sysdStatuses, nil
+}
+
+func (sd *StatusDecorator) queryServiceStatus(scope snap.DaemonScope, units []string) ([]*systemd.UnitStatus, error) {
+	// sysd.Status() makes sure that we get only the units we asked
+	// for and raises an error otherwise
+	var sts []*systemd.UnitStatus
+	var err error
+	switch scope {
+	case snap.SystemDaemon:
+		sts, err = sd.sysd.Status(units)
+	case snap.UserDaemon:
+		if sd.uid != "" {
+			sts, err = sd.queryUserServiceStatus(units)
+		} else {
+			sts, err = sd.globalUserSysd.Status(units)
+		}
+	default:
+		return nil, fmt.Errorf("internal error: unknown daemon-scope %q", scope)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(sts) != len(units) {
+		return nil, fmt.Errorf("expected %d results, got %d", len(units), len(sts))
+	}
+	return sts, nil
+}
+
 // DecorateWithStatus adds service status information to the given
 // client.AppInfo associated with the given snap.AppInfo.
 // If the snap is inactive or the app is not service it does nothing.
-func (sd *StatusDecorator) DecorateWithStatus(appInfo *client.AppInfo, snapApp *snap.AppInfo) error {
+func (sd *StatusDecorator) DecorateWithStatus(appInfo *snapdclient.AppInfo, snapApp *snap.AppInfo) error {
 	if appInfo.Snap != snapApp.Snap.InstanceName() || appInfo.Name != snapApp.Name {
 		return fmt.Errorf("internal error: misassociated app info %v and client app info %s.%s", snapApp, appInfo.Snap, appInfo.Name)
 	}
 	if !snapApp.Snap.IsActive() || !snapApp.IsService() {
 		// nothing to do
 		return nil
-	}
-	var sysd systemd.Systemd
-	switch snapApp.DaemonScope {
-	case snap.SystemDaemon:
-		sysd = sd.sysd
-	case snap.UserDaemon:
-		sysd = sd.globalUserSysd
-	default:
-		return fmt.Errorf("internal error: unknown daemon-scope %q", snapApp.DaemonScope)
 	}
 
 	// collect all services for a single call to systemctl
@@ -319,29 +410,25 @@ func (sd *StatusDecorator) DecorateWithStatus(appInfo *client.AppInfo, snapApp *
 		serviceNames = append(serviceNames, timerUnit)
 	}
 
-	// sysd.Status() makes sure that we get only the units we asked
-	// for and raises an error otherwise
-	sts, err := sysd.Status(serviceNames)
+	sts, err := sd.queryServiceStatus(snapApp.DaemonScope, serviceNames)
 	if err != nil {
 		return fmt.Errorf("cannot get status of services of app %q: %v", appInfo.Name, err)
 	}
-	if len(sts) != len(serviceNames) {
-		return fmt.Errorf("cannot get status of services of app %q: expected %d results, got %d", appInfo.Name, len(serviceNames), len(sts))
-	}
+
 	for _, st := range sts {
 		switch filepath.Ext(st.Name) {
 		case ".service":
 			appInfo.Enabled = st.Enabled
 			appInfo.Active = st.Active
 		case ".timer":
-			appInfo.Activators = append(appInfo.Activators, client.AppActivator{
+			appInfo.Activators = append(appInfo.Activators, snapdclient.AppActivator{
 				Name:    snapApp.Name,
 				Enabled: st.Enabled,
 				Active:  st.Active,
 				Type:    "timer",
 			})
 		case ".socket":
-			appInfo.Activators = append(appInfo.Activators, client.AppActivator{
+			appInfo.Activators = append(appInfo.Activators, snapdclient.AppActivator{
 				Name:    sockSvcFileToName[st.Name],
 				Enabled: st.Enabled,
 				Active:  st.Active,
@@ -360,7 +447,7 @@ func (sd *StatusDecorator) DecorateWithStatus(appInfo *client.AppInfo, snapApp *
 		// or deactivated.  As the service activation file is
 		// created when the snap is installed, report as
 		// enabled/active.
-		appInfo.Activators = append(appInfo.Activators, client.AppActivator{
+		appInfo.Activators = append(appInfo.Activators, snapdclient.AppActivator{
 			Name:    busName,
 			Enabled: true,
 			Active:  true,

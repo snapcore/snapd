@@ -21,6 +21,7 @@ package servicestate_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -44,16 +45,41 @@ import (
 	"github.com/snapcore/snapd/snap/snaptest"
 	"github.com/snapcore/snapd/systemd"
 	"github.com/snapcore/snapd/testutil"
+	"github.com/snapcore/snapd/usersession/agent"
 	"github.com/snapcore/snapd/wrappers"
 )
 
-type statusDecoratorSuite struct{}
+type statusDecoratorSuite struct {
+	testutil.DBusTest
+	tempdir string
+	agent   *agent.SessionAgent
+}
 
 var _ = Suite(&statusDecoratorSuite{})
 
+func (s *statusDecoratorSuite) SetUpTest(c *C) {
+	s.DBusTest.SetUpTest(c)
+	s.tempdir = c.MkDir()
+	dirs.SetRootDir(s.tempdir)
+
+	xdgRuntimeDir := fmt.Sprintf("%s/%d", dirs.XdgRuntimeDirBase, os.Getuid())
+	err := os.MkdirAll(xdgRuntimeDir, 0700)
+	c.Assert(err, IsNil)
+	s.agent, err = agent.New()
+	c.Assert(err, IsNil)
+	s.agent.Start()
+}
+
+func (s *statusDecoratorSuite) TearDownTest(c *C) {
+	if s.agent != nil {
+		err := s.agent.Stop()
+		c.Check(err, IsNil)
+	}
+	dirs.SetRootDir("")
+	s.DBusTest.TearDownTest(c)
+}
+
 func (s *statusDecoratorSuite) TestDecorateWithStatus(c *C) {
-	dirs.SetRootDir(c.MkDir())
-	defer dirs.SetRootDir("")
 	snp := &snap.Info{
 		SideInfo: snap.SideInfo{
 			RealName: "foo",
@@ -269,6 +295,229 @@ NeedDaemonReload=no
 		c.Check(app.Activators, DeepEquals, []client.AppActivator{
 			{Name: "socket1", Type: "socket", Active: false, Enabled: enabled},
 			{Name: "svc", Type: "timer", Active: false, Enabled: enabled},
+			{Name: "org.example.Svc", Type: "dbus", Active: true, Enabled: true},
+		})
+	}
+}
+
+func (s *statusDecoratorSuite) TestDecorateWithStatusAsUser(c *C) {
+	snp := &snap.Info{
+		SideInfo: snap.SideInfo{
+			RealName: "foo",
+			Revision: snap.R(1),
+		},
+	}
+	err := os.MkdirAll(snp.MountDir(), 0755)
+	c.Assert(err, IsNil)
+	err = os.Symlink(snp.Revision.String(), filepath.Join(filepath.Dir(snp.MountDir()), "current"))
+	c.Assert(err, IsNil)
+
+	disabled := false
+	r := systemd.MockSystemctl(func(args ...string) (buf []byte, err error) {
+		if args[0] == "--user" {
+			args = args[1:]
+		}
+
+		switch args[0] {
+		case "show":
+			c.Assert(args[0], Equals, "show")
+			var buf string
+			for _, unit := range args[2:] {
+				if buf != "" {
+					buf += "\n"
+				}
+				activeState, unitState := "active", "enabled"
+				if disabled {
+					activeState = "inactive"
+					unitState = "disabled"
+				}
+				if strings.HasSuffix(unit, ".timer") || strings.HasSuffix(unit, ".socket") || strings.HasSuffix(unit, ".target") {
+					// Units using the baseProperties query
+					buf += fmt.Sprintf(`Id=%s
+Names=%[1]s
+ActiveState=%s
+UnitFileState=%s
+`, unit, activeState, unitState)
+				} else {
+					// Units using the extendedProperties query
+					buf += fmt.Sprintf(`Id=%s
+Names=%[1]s
+Type=simple
+ActiveState=%s
+UnitFileState=%s
+NeedDaemonReload=no
+`, unit, activeState, unitState)
+				}
+			}
+			return []byte(buf), nil
+		default:
+			c.Errorf("unexpected systemctl command: %v", args)
+			return nil, fmt.Errorf("should not be reached")
+		}
+	})
+	defer r()
+
+	sd := servicestate.NewStatusDecoratorForUid(nil, context.Background(), "1000")
+
+	// not a service
+	app := &client.AppInfo{
+		Snap: "foo",
+		Name: "app",
+	}
+	snapApp := &snap.AppInfo{Snap: snp, Name: "app"}
+
+	err = sd.DecorateWithStatus(app, snapApp)
+	c.Assert(err, IsNil)
+
+	for _, enabled := range []bool{true, false} {
+		disabled = !enabled
+
+		// service only
+		app = &client.AppInfo{
+			Snap:   snp.InstanceName(),
+			Name:   "svc",
+			Daemon: "simple",
+		}
+		snapApp = &snap.AppInfo{
+			Snap:        snp,
+			Name:        "svc",
+			Daemon:      "simple",
+			DaemonScope: snap.SystemDaemon,
+		}
+
+		err = sd.DecorateWithStatus(app, snapApp)
+		c.Assert(err, IsNil)
+		c.Check(app.Active, Equals, enabled)
+		c.Check(app.Enabled, Equals, enabled)
+
+		// service  + timer
+		app = &client.AppInfo{
+			Snap:   snp.InstanceName(),
+			Name:   "svc",
+			Daemon: "simple",
+		}
+		snapApp = &snap.AppInfo{
+			Snap:        snp,
+			Name:        "svc",
+			Daemon:      "simple",
+			DaemonScope: snap.SystemDaemon,
+		}
+		snapApp.Timer = &snap.TimerInfo{
+			App:   snapApp,
+			Timer: "10:00",
+		}
+
+		err = sd.DecorateWithStatus(app, snapApp)
+		c.Assert(err, IsNil)
+		c.Check(app.Active, Equals, enabled)
+		c.Check(app.Enabled, Equals, enabled)
+		c.Check(app.Activators, DeepEquals, []client.AppActivator{
+			{Name: "svc", Type: "timer", Active: enabled, Enabled: enabled},
+		})
+
+		// service with socket
+		app = &client.AppInfo{
+			Snap:   snp.InstanceName(),
+			Name:   "svc",
+			Daemon: "simple",
+		}
+		snapApp = &snap.AppInfo{
+			Snap:        snp,
+			Name:        "svc",
+			Daemon:      "simple",
+			DaemonScope: snap.SystemDaemon,
+		}
+		snapApp.Sockets = map[string]*snap.SocketInfo{
+			"socket1": {
+				App:          snapApp,
+				Name:         "socket1",
+				ListenStream: "a.socket",
+			},
+		}
+
+		err = sd.DecorateWithStatus(app, snapApp)
+		c.Assert(err, IsNil)
+		c.Check(app.Active, Equals, enabled)
+		c.Check(app.Enabled, Equals, enabled)
+		c.Check(app.Activators, DeepEquals, []client.AppActivator{
+			{Name: "socket1", Type: "socket", Active: enabled, Enabled: enabled},
+		})
+
+		// service with slot activation will always be enabled as we cannot
+		// disable/enable slot activation at the moment.
+		app = &client.AppInfo{
+			Snap:   snp.InstanceName(),
+			Name:   "svc",
+			Daemon: "simple",
+		}
+		snapApp = &snap.AppInfo{
+			Snap:        snp,
+			Name:        "svc",
+			Daemon:      "simple",
+			DaemonScope: snap.SystemDaemon,
+		}
+		snapApp.ActivatesOn = []*snap.SlotInfo{
+			{
+				Snap:      snp,
+				Name:      "dbus-slot",
+				Interface: "dbus",
+				Attrs: map[string]interface{}{
+					"bus":  "system",
+					"name": "org.example.Svc",
+				},
+			},
+		}
+
+		err = sd.DecorateWithStatus(app, snapApp)
+		c.Assert(err, IsNil)
+		c.Check(app.Active, Equals, enabled)
+		c.Check(app.Enabled, Equals, true)
+		c.Check(app.Activators, DeepEquals, []client.AppActivator{
+			{Name: "org.example.Svc", Type: "dbus", Active: true, Enabled: true},
+		})
+
+		// Check that for users the state is reported correctly
+		app = &client.AppInfo{
+			Snap:   snp.InstanceName(),
+			Name:   "svc",
+			Daemon: "simple",
+		}
+		snapApp = &snap.AppInfo{
+			Snap:        snp,
+			Name:        "svc",
+			Daemon:      "simple",
+			DaemonScope: snap.UserDaemon,
+		}
+		snapApp.Sockets = map[string]*snap.SocketInfo{
+			"socket1": {
+				App:          snapApp,
+				Name:         "socket1",
+				ListenStream: "a.socket",
+			},
+		}
+		snapApp.Timer = &snap.TimerInfo{
+			App:   snapApp,
+			Timer: "10:00",
+		}
+		snapApp.ActivatesOn = []*snap.SlotInfo{
+			{
+				Snap:      snp,
+				Name:      "dbus-slot",
+				Interface: "dbus",
+				Attrs: map[string]interface{}{
+					"bus":  "session",
+					"name": "org.example.Svc",
+				},
+			},
+		}
+
+		err = sd.DecorateWithStatus(app, snapApp)
+		c.Assert(err, IsNil)
+		c.Check(app.Active, Equals, enabled)
+		c.Check(app.Enabled, Equals, true) // when a service is slot activated its always enabled
+		c.Check(app.Activators, DeepEquals, []client.AppActivator{
+			{Name: "socket1", Type: "socket", Active: enabled, Enabled: enabled},
+			{Name: "svc", Type: "timer", Active: enabled, Enabled: enabled},
 			{Name: "org.example.Svc", Type: "dbus", Active: true, Enabled: true},
 		})
 	}

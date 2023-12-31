@@ -22,7 +22,9 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os/user"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,7 +44,7 @@ var (
 		GET:         getAppsInfo,
 		POST:        postApps,
 		ReadAccess:  openAccess{},
-		WriteAccess: authenticatedAccess{},
+		WriteAccess: authenticatedAccess{Polkit: polkitActionManage},
 	}
 
 	logsCmd = &Command{
@@ -54,7 +56,6 @@ var (
 
 func getAppsInfo(c *Command, r *http.Request, user *auth.UserState) Response {
 	query := r.URL.Query()
-
 	opts := appInfoOptions{}
 	switch sel := query.Get("select"); sel {
 	case "":
@@ -65,13 +66,31 @@ func getAppsInfo(c *Command, r *http.Request, user *auth.UserState) Response {
 		return BadRequest("invalid select parameter: %q", sel)
 	}
 
+	var global bool
+	if sel := query.Get("global"); sel != "" {
+		if g, err := strconv.ParseBool(sel); err != nil {
+			return BadRequest("invalid global parameter: %q", sel)
+		} else {
+			global = g
+		}
+	}
+
 	appInfos, rspe := appInfosFor(c.d.overlord.State(), strutil.CommaSeparatedList(query.Get("names")), opts)
 	if rspe != nil {
 		return rspe
 	}
 
-	sd := servicestate.NewStatusDecorator(progress.Null)
+	u, err := systemUserFromRequest(r)
+	if err != nil {
+		return BadRequest("cannot retrieve services: %v", err)
+	}
 
+	var sd *servicestate.StatusDecorator
+	if (u == nil || u.Uid == "0") || global {
+		sd = servicestate.NewStatusDecorator(progress.Null)
+	} else {
+		sd = servicestate.NewStatusDecoratorForUid(progress.Null, r.Context(), u.Uid)
+	}
 	clientAppInfos, err := clientutil.ClientAppInfosFromSnapAppInfos(appInfos, sd)
 	if err != nil {
 		return InternalError("%v", err)
@@ -223,10 +242,97 @@ func getLogs(c *Command, r *http.Request, user *auth.UserState) Response {
 
 var servicestateControl = servicestate.Control
 
-func postApps(c *Command, r *http.Request, user *auth.UserState) Response {
+func decodeServiceInstruction(body io.ReadCloser, u *user.User) (*servicestate.Instruction, error) {
 	var inst servicestate.Instruction
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(body)
 	if err := decoder.Decode(&inst); err != nil {
+		return nil, err
+	}
+	if len(inst.ServicesOfUsers) == 0 {
+		// If root is making this request, then implied users are all
+		if u == nil || u.Uid == "0" {
+			inst.ServicesOfUsers = append(inst.ServicesOfUsers, "users")
+		}
+	} else {
+		// If the list of users to affect is simply 'user', then lets fixup that
+		// by the username of the invoker
+		var updated []string
+		for _, name := range inst.ServicesOfUsers {
+			if name == "user" {
+				// Reference to the current user, if the user is root this not valid
+				// as root users should only use 'users' for all, or provide a list
+				// of user names
+				if u == nil || u.Uid == "0" {
+					return nil, fmt.Errorf("cannot use \"user\" in a root user context for service operations")
+				}
+				updated = append(updated, u.Username)
+			} else {
+				updated = append(updated, name)
+			}
+		}
+		inst.ServicesOfUsers = updated
+	}
+	return &inst, nil
+}
+
+func hasUserService(apps []*snap.AppInfo) bool {
+	for _, app := range apps {
+		if app.IsService() && app.DaemonScope == snap.UserDaemon {
+			return true
+		}
+	}
+	return false
+}
+
+var systemUserFromRequest = func(r *http.Request) (*user.User, error) {
+	ucreds, err := ucrednetGet(r.RemoteAddr)
+	if err != nil || ucreds == nil {
+		return nil, err
+	}
+	return user.LookupId(strconv.Itoa(int(ucreds.Uid)))
+}
+
+func validateScopeAgainstApps(inst *servicestate.Instruction, u *user.User, apps []*snap.AppInfo) error {
+	// Set default scopes if not provided
+	if len(inst.Scope) == 0 {
+		// If root is making this request, implied scopes are all
+		if u == nil || u.Uid == "0" {
+			inst.Scope = append(inst.Scope, "system", "user")
+		} else {
+			// It is in an error for non-root not to specify a scope, if we're targeting a
+			// user daemons
+			if hasUserService(apps) {
+				return fmt.Errorf("a service scope must be provided for the specified services")
+			}
+			// Otherwise imply the service scope only
+			inst.Scope = append(inst.Scope, "system")
+		}
+	}
+	return nil
+}
+
+func validateUsersAgainstApps(inst *servicestate.Instruction, u *user.User, apps []*snap.AppInfo) error {
+	// Verify the user
+	if len(inst.ServicesOfUsers) == 0 {
+		// If root is making this request, then implied users are all
+		if u != nil && u.Uid != "0" {
+			// It is an error for a non-root to not specify anything if we are targeting
+			// user daemons
+			if hasUserService(apps) {
+				return fmt.Errorf("no users were listed to be targeted for service operation")
+			}
+		}
+	}
+	return nil
+}
+
+func postApps(c *Command, r *http.Request, user *auth.UserState) Response {
+	u, err := systemUserFromRequest(r)
+	if err != nil {
+		return BadRequest("cannot perform operation on services: %v", err)
+	}
+	inst, err := decodeServiceInstruction(r.Body, u)
+	if err != nil {
 		return BadRequest("cannot decode request body into service operation: %v", err)
 	}
 	// XXX: decoder.More()
@@ -246,12 +352,20 @@ func postApps(c *Command, r *http.Request, user *auth.UserState) Response {
 		return InternalError("no services found")
 	}
 
+	// Now that we know the services we are affecting, do some additional checks/fixups
+	if err := validateScopeAgainstApps(inst, u, appInfos); err != nil {
+		return BadRequest("cannot perform operation on services: %v", err)
+	}
+	if err := validateUsersAgainstApps(inst, u, appInfos); err != nil {
+		return BadRequest("cannot perform operation on services: %v", err)
+	}
+
 	// do not pass flags - only create service-control tasks, do not create
 	// exec-command tasks for old snapd. These are not needed since we are
 	// handling momentary snap service commands.
 	st.Lock()
 	defer st.Unlock()
-	tss, err := servicestateControl(st, appInfos, &inst, nil, nil)
+	tss, err := servicestateControl(st, appInfos, inst, nil, nil)
 	if err != nil {
 		// TODO: use errToResponse here too and introduce a proper error kind ?
 		if _, ok := err.(servicestate.ServiceActionConflictError); ok {
@@ -261,7 +375,7 @@ func postApps(c *Command, r *http.Request, user *auth.UserState) Response {
 	}
 	// names received in the request can be snap or snap.app, we need to
 	// extract the actual snap names before associating them with a change
-	chg := newChange(st, "service-control", "Running service command", tss, namesToSnapNames(&inst))
+	chg := newChange(st, "service-control", "Running service command", tss, namesToSnapNames(inst))
 	st.EnsureBefore(0)
 	return AsyncResponse(nil, chg.ID())
 }
