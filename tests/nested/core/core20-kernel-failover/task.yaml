@@ -3,7 +3,7 @@ summary: Check that a broken kernel snap automatically rolls itself back
 details: |
   This test verifies that a broken kernel snap would rollback.  This
   test expects secure boot is enabled and the signature is broken. It
-  does not test broken kernels that are signed that would carsh the
+  does not test broken kernels that are signed that would crash the
   VM.
 
 # TODO:UC20: write equivalent test for base snap failover
