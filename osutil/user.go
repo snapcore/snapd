@@ -189,9 +189,16 @@ func sudoersFile(name string) string {
 	return filepath.Join(sudoersDotD, "create-user-"+strings.Replace(name, ".", "%2E", -1))
 }
 
+var hasAddUserExecutable = func() bool {
+	return ExecutableExists("adduser")
+}
+
 // AddUser uses the Debian/Ubuntu/derivative 'adduser' command for creating
 // regular login users on Ubuntu Core. 'adduser' is not portable cross-distro
 // but is convenient for creating regular login users.
+// if 'adduser', 'useradd' is used instead.
+// This order is preferred as older version of 'useradd' does not support
+// "--badname" option.
 //
 // The username created by this function will be checked against
 // IsValidUsername().
@@ -210,6 +217,16 @@ func AddUser(name string, opts *AddUserOptions) error {
 		"--gecos", opts.Gecos,
 		"--disabled-password",
 	}
+	if !hasAddUserExecutable() {
+		cmdStr = []string{
+			"useradd",
+			"--badname",
+			"--comment", opts.Gecos,
+			"--create-home",
+			"--shell", "/bin/bash",
+		}
+	}
+
 	if opts.ExtraUsers {
 		cmdStr = append(cmdStr, "--extrausers")
 	}
@@ -217,7 +234,7 @@ func AddUser(name string, opts *AddUserOptions) error {
 
 	cmd := exec.Command(cmdStr[0], cmdStr[1:]...)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("adduser failed with: %s", OutputErr(output, err))
+		return fmt.Errorf("%s failed with: %s", cmdStr[0], OutputErr(output, err))
 	}
 
 	if opts.Sudoer {
