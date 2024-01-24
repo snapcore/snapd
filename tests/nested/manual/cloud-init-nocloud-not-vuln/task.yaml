@@ -2,6 +2,9 @@ summary: |
     Test that cloud-init is no longer vulnerable on Ubuntu Core with the fix for
     CVE-2020-11933 in place with a system that used NoCloud configuration.
 
+details: |
+    TODO
+
 systems: [ubuntu-18.04-64, ubuntu-16.04-64]
 
 environment:
@@ -97,11 +100,14 @@ execute: |
             tests.nested wait-for ssh
         else
             # build the snapd snap for this run
-            "$TESTSTOOLS"/snaps-state repack_snapd_deb_into_snap snapd
-            remote.push "$PWD/snapd-from-deb.snap"
+            # shellcheck source=tests/lib/prepare.sh
+            . "$TESTSLIB"/prepare.sh
+            build_snapd_snap .
+            mv snapd_*.snap snapd.snap
+            remote.push "$PWD/snapd.snap"
 
             # install the snapd snap
-            remote.exec "sudo snap install snapd-from-deb.snap --dangerous"
+            remote.exec "sudo snap install snapd.snap --dangerous"
         fi
     fi
 
