@@ -604,10 +604,7 @@ func (g *grub) getGrubShimBinaryFullPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if osutil.FileExists(filepath.Join(g.rootdir, assets.fallbackBinary)) {
-		return filepath.Join(g.rootdir, assets.shimBinary), nil
-	}
-	return filepath.Join(g.rootdir, assets.defaultShimBinary), nil
+	return filepath.Join(g.rootdir, assets.shimBinary.path), nil
 }
 
 // TrustedAssets returns the map of relative paths to asset
