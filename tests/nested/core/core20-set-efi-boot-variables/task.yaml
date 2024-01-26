@@ -1,5 +1,8 @@
 summary: Tests for the code that sets EFI boot variables, as if it were a library separate from snapd
 
+details: |
+  TODO
+
 systems: [ubuntu-2*]
 
 prepare: |
