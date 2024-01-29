@@ -383,7 +383,7 @@ var (
 var (
 	InhibitRefresh               = inhibitRefresh
 	MaxDuration                  = maxDuration
-	MaxInhibitionTime            = maxInhibitionTime
+	MaxInhibitionDuration        = maxInhibitionDuration
 	MaybeAddRefreshInhibitNotice = maybeAddRefreshInhibitNotice
 )
 
