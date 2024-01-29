@@ -638,6 +638,7 @@ func (s *validationSetsSuite) TestMaybeRestoreValidationSetsAndRevertSnapsOneRev
 		"auto-connect",
 		"set-auto-aliases",
 		"setup-aliases",
+		"uninhibit-snap",
 		"start-snap-services",
 		"run-hook[configure]",
 		"run-hook[check-health]",

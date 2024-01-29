@@ -684,6 +684,8 @@ hooks:
 		switch t.Kind() {
 		case "prerequisites":
 			expectedStatus = state.DoneStatus
+		case "uninhibit-snap":
+			expectedStatus = state.DoneStatus
 		case "run-hook":
 			var hs hookstate.HookSetup
 			err := t.Get("hook-setup", &hs)
@@ -4908,6 +4910,8 @@ func validateRefreshTasks(c *C, tasks []*state.Task, name, revno string, flags i
 	c.Assert(tasks[i].Summary(), Equals, fmt.Sprintf(`Set automatic aliases for snap "%s"`, name))
 	i++
 	c.Assert(tasks[i].Summary(), Equals, fmt.Sprintf(`Setup snap "%s" aliases`, name))
+	i++
+	c.Assert(tasks[i].Summary(), Equals, fmt.Sprintf(`Allow snap "%s" to run`, name))
 	i++
 	c.Assert(tasks[i].Summary(), Equals, fmt.Sprintf(`Run post-refresh hook of "%s" snap if present`, name))
 	i++

@@ -25,7 +25,6 @@ import (
 	"path/filepath"
 
 	"github.com/snapcore/snapd/boot"
-	"github.com/snapcore/snapd/cmd/snaplock/runinhibit"
 	"github.com/snapcore/snapd/logger"
 	"github.com/snapcore/snapd/osutil"
 	"github.com/snapcore/snapd/progress"
@@ -50,13 +49,13 @@ type LinkContext struct {
 	// ServiceOptions is used to configure services.
 	ServiceOptions *wrappers.SnapServiceOptions
 
-	// RunInhibitHint is used only in Unlink snap, and can be used to
-	// establish run inhibition lock for refresh operations.
-	RunInhibitHint runinhibit.Hint
-
 	// RequireMountedSnapdSnap indicates that the apps and services
 	// generated when linking need to use tooling from the snapd snap mount.
 	RequireMountedSnapdSnap bool
+
+	// SkipBinaries indicates that we should skip removing snap binaries,
+	// icons and desktop files in UnlinkSnap
+	SkipBinaries bool
 }
 
 func updateCurrentSymlinks(info *snap.Info) (e error) {
@@ -123,7 +122,7 @@ func (b Backend) LinkSnap(info *snap.Info, dev snap.Device, linkCtx LinkContext,
 			return
 		}
 		timings.Run(tm, "remove-wrappers", fmt.Sprintf("remove wrappers of snap %s", info.InstanceName()), func(timings.Measurer) {
-			removeGeneratedWrappers(info, linkCtx.FirstInstall, progress.Null)
+			removeGeneratedWrappers(info, linkCtx, progress.Null)
 		})
 	}()
 
@@ -164,11 +163,6 @@ func (b Backend) LinkSnap(info *snap.Info, dev snap.Device, linkCtx LinkContext,
 				logger.Noticef("cannot update fontconfig cache: %v", err)
 			}
 		})
-	}
-
-	// Stop inhibiting application startup by removing the inhibitor file.
-	if err := runinhibit.Unlock(info.InstanceName()); err != nil {
-		return boot.RebootInfo{}, err
 	}
 
 	return rebootInfo, nil
@@ -240,34 +234,37 @@ func (b Backend) generateWrappers(s *snap.Info, linkCtx LinkContext) error {
 	return nil
 }
 
-func removeGeneratedWrappers(s *snap.Info, firstInstallUndo bool, meter progress.Meter) error {
+func removeGeneratedWrappers(s *snap.Info, linkCtx LinkContext, meter progress.Meter) error {
 	if s.Type() == snap.TypeSnapd {
-		return removeGeneratedSnapdWrappers(s, firstInstallUndo, progress.Null)
+		return removeGeneratedSnapdWrappers(s, linkCtx.FirstInstall, progress.Null)
 	}
 
-	err1 := wrappers.RemoveSnapBinaries(s)
-	if err1 != nil {
-		logger.Noticef("Cannot remove binaries for %q: %v", s.InstanceName(), err1)
+	var err1, err2, err3 error
+	if !linkCtx.SkipBinaries {
+		err1 = wrappers.RemoveSnapBinaries(s)
+		if err1 != nil {
+			logger.Noticef("Cannot remove binaries for %q: %v", s.InstanceName(), err1)
+		}
+
+		err2 = wrappers.RemoveSnapDesktopFiles(s)
+		if err2 != nil {
+			logger.Noticef("Cannot remove desktop files for %q: %v", s.InstanceName(), err2)
+		}
+
+		err3 = wrappers.RemoveSnapIcons(s)
+		if err3 != nil {
+			logger.Noticef("Cannot remove desktop icons for %q: %v", s.InstanceName(), err3)
+		}
 	}
 
-	err2 := wrappers.RemoveSnapDBusActivationFiles(s)
-	if err2 != nil {
-		logger.Noticef("Cannot remove D-Bus activation for %q: %v", s.InstanceName(), err2)
-	}
-
-	err3 := wrappers.RemoveSnapServices(s, meter)
-	if err3 != nil {
-		logger.Noticef("Cannot remove services for %q: %v", s.InstanceName(), err3)
-	}
-
-	err4 := wrappers.RemoveSnapDesktopFiles(s)
+	err4 := wrappers.RemoveSnapDBusActivationFiles(s)
 	if err4 != nil {
-		logger.Noticef("Cannot remove desktop files for %q: %v", s.InstanceName(), err4)
+		logger.Noticef("Cannot remove D-Bus activation for %q: %v", s.InstanceName(), err4)
 	}
 
-	err5 := wrappers.RemoveSnapIcons(s)
+	err5 := wrappers.RemoveSnapServices(s, meter)
 	if err5 != nil {
-		logger.Noticef("Cannot remove desktop icons for %q: %v", s.InstanceName(), err5)
+		logger.Noticef("Cannot remove services for %q: %v", s.InstanceName(), err5)
 	}
 
 	return firstErr(err1, err2, err3, err4, err5)
@@ -301,21 +298,14 @@ func removeGeneratedSnapdWrappers(s *snap.Info, firstInstall bool, meter progres
 // symlinks. The firstInstallUndo is true when undoing the first installation of
 // the snap.
 func (b Backend) UnlinkSnap(info *snap.Info, linkCtx LinkContext, meter progress.Meter) error {
-	var err0 error
-	if hint := linkCtx.RunInhibitHint; hint != runinhibit.HintNotInhibited {
-		// inhibit startup of new programs
-		inhibitInfo := runinhibit.InhibitInfo{Previous: info.SnapRevision()}
-		err0 = runinhibit.LockWithHint(info.InstanceName(), hint, inhibitInfo)
-	}
-
 	// remove generated services, binaries etc
-	err1 := removeGeneratedWrappers(info, linkCtx.FirstInstall, meter)
+	err1 := removeGeneratedWrappers(info, linkCtx, meter)
 
 	// and finally remove current symlinks
 	err2 := removeCurrentSymlinks(info)
 
 	// FIXME: aggregate errors instead
-	return firstErr(err0, err1, err2)
+	return firstErr(err1, err2)
 }
 
 func (b Backend) QueryDisabledServices(info *snap.Info, pb progress.Meter) ([]string, error) {
