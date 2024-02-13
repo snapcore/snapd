@@ -1013,7 +1013,7 @@ func (m *DeviceManager) doInstallFinish(t *state.Task, _ *tomb.Tomb) error {
 	}
 	defer unmountParts()
 
-	if containsSystemSeed(mergedVols) {
+	if gadget.VolumesHaveRole(mergedVols, gadget.SystemSeed) {
 		copier, ok := systemAndSnaps.Seed.(seed.Copier)
 		if !ok {
 			return fmt.Errorf("internal error: seed does not support copying: %s", systemAndSnaps.Label)
@@ -1075,18 +1075,6 @@ func (m *DeviceManager) doInstallFinish(t *state.Task, _ *tomb.Tomb) error {
 	}
 
 	return nil
-}
-
-func containsSystemSeed(volumes map[string]*gadget.Volume) bool {
-	for _, vol := range volumes {
-		for _, vs := range vol.Structure {
-			if vs.Role == gadget.SystemSeed {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func (m *DeviceManager) doInstallSetupStorageEncryption(t *state.Task, _ *tomb.Tomb) error {
