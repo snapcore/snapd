@@ -5,9 +5,10 @@ details: End-to-end test for install via muinstaller
 systems: [ubuntu-22.04-64]
 
 environment:
-  # No partial gadget or TPM by default
+  # No partial gadget by default
   PARTIAL_GADGET: false
-  NESTED_ENABLE_TPM: false
+
+  NESTED_ENABLE_TPM: true
 
   # Test both encrypted and unencrypted install using the muinstaller
   NESTED_ENABLE_TPM/encrypted,partial: true
