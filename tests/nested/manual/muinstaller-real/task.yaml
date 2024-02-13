@@ -336,10 +336,12 @@ execute: |
 
   # Bump edition of ubuntu-{seed,boot} content to get grub updated in both partitions
   if [ "$SEED_PARTITION" = 'true' ]; then
-      yq -i '(.volumes.pc.structure[] | select(.role == "system-seed") | .update.edition) |= . + 1' pc-gadget/meta/gadget.yaml
+      role='system-seed'
   else
-      yq -i '(.volumes.pc.structure[] | select(.role == "system-seed-null") | .update.edition) |= . + 1' pc-gadget/meta/gadget.yaml
+      role='system-seed-null'
   fi
+
+  yq -i "(.volumes.pc.structure[] | select(.role == \"${role}\") | .update.edition) |= . + 1" pc-gadget/meta/gadget.yaml
   yq -i '(.volumes.pc.structure[] | select(.role == "system-boot") | .update.edition) |= . + 1' pc-gadget/meta/gadget.yaml
   nested_secboot_sign_file pc-gadget/grubx64.efi "$SNAKEOIL_KEY" "$SNAKEOIL_CERT"
   refresh_rebooting_snap pc pc.snap.orig ./pc-gadget
