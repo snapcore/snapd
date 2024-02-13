@@ -393,5 +393,5 @@ execute: |
       # model in the seed should match the one that was installed on the system
       remote.exec "diff <(snap model --assertion) /run/mnt/ubuntu-seed/systems/classic/model"
   else
-      remote.exec ! test -e /run/mnt/ubuntu-seed/systems/classic
+      remote.exec not test -e /run/mnt/ubuntu-seed/systems/classic
   fi
