@@ -5217,3 +5217,22 @@ func (s *gadgetYamlTestSuite) TestGadgetToLinuxFilesystem(c *C) {
 		c.Check(tc.vs.LinuxFilesystem(), Equals, tc.linFs)
 	}
 }
+
+func (s *gadgetYamlTestSuite) TestVolumesHaveRole(c *C) {
+	volumes := map[string]*gadget.Volume{
+		"name": {
+			Structure: []gadget.VolumeStructure{
+				{Role: gadget.SystemSeed},
+			},
+		},
+		"other-name": {
+			Structure: []gadget.VolumeStructure{
+				{Role: gadget.SystemBoot},
+			},
+		},
+	}
+
+	c.Check(gadget.VolumesHaveRole(volumes, gadget.SystemSeed), Equals, true)
+	c.Check(gadget.VolumesHaveRole(volumes, gadget.SystemBoot), Equals, true)
+	c.Check(gadget.VolumesHaveRole(volumes, gadget.SystemSeedNull), Equals, false)
+}
