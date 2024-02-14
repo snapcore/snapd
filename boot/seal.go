@@ -31,6 +31,7 @@ import (
 	"github.com/snapcore/snapd/asserts"
 	"github.com/snapcore/snapd/bootloader"
 	"github.com/snapcore/snapd/dirs"
+	"github.com/snapcore/snapd/gadget"
 	"github.com/snapcore/snapd/gadget/device"
 	"github.com/snapcore/snapd/kernel/fde"
 	"github.com/snapcore/snapd/logger"
@@ -81,7 +82,7 @@ func MockSecbootResealKeys(f func(params *secboot.ResealKeysParams) error) (rest
 }
 
 // MockResealKeyToModeenv is only useful in testing.
-func MockResealKeyToModeenv(f func(rootdir string, modeenv *Modeenv, expectReseal bool, unlocker Unlocker) error) (restore func()) {
+func MockResealKeyToModeenv(f func(rootdir string, modeenv *Modeenv, options *ResealToModeenvOptions, unlocker Unlocker) error) (restore func()) {
 	osutil.MustBeTestBinary("resealKeyToModeenv only can be mocked in tests")
 	old := resealKeyToModeenv
 	resealKeyToModeenv = f
@@ -414,6 +415,16 @@ func sealFallbackObjectKeys(key, saveKey keys.EncryptionKey, pbc predictableBoot
 
 var resealKeyToModeenv = resealKeyToModeenvImpl
 
+type ResealToModeenvOptions struct {
+	// ExpectReseal is used when the matching is ambigous because
+	// the boot chains contain unrevisioned kernels.
+	ExpectReseal bool
+	// Force forces resealing to happen
+	Force bool
+	// New keys to reseal
+	KeyForRole map[string]keys.EncryptionKey
+}
+
 // resealKeyToModeenv reseals the existing encryption key to the
 // parameters specified in modeenv.
 // It is *very intentional* that resealing takes the modeenv and only
@@ -421,7 +432,7 @@ var resealKeyToModeenv = resealKeyToModeenvImpl
 // atomically.  In particular we want to avoid resealing against
 // transient/in-memory information with the risk that successive
 // reseals during in-progress operations produce diverging outcomes.
-func resealKeyToModeenvImpl(rootdir string, modeenv *Modeenv, expectReseal bool, unlocker Unlocker) error {
+func resealKeyToModeenvImpl(rootdir string, modeenv *Modeenv, options *ResealToModeenvOptions, unlocker Unlocker) error {
 	if !isModeeenvLocked() {
 		return fmt.Errorf("internal error: cannot reseal without the modeenv lock")
 	}
@@ -436,13 +447,13 @@ func resealKeyToModeenvImpl(rootdir string, modeenv *Modeenv, expectReseal bool,
 	}
 	switch method {
 	case device.SealingMethodFDESetupHook:
-		return resealKeyToModeenvUsingFDESetupHook(rootdir, modeenv, expectReseal)
+		return resealKeyToModeenvUsingFDESetupHook(rootdir, modeenv, options)
 	case device.SealingMethodTPM, device.SealingMethodLegacyTPM:
 		if unlocker != nil {
 			// unlock/relock global state
 			defer unlocker()()
 		}
-		return resealKeyToModeenvSecboot(rootdir, modeenv, expectReseal)
+		return resealKeyToModeenvSecboot(rootdir, modeenv, options)
 	default:
 		return fmt.Errorf("unknown key sealing method: %q", method)
 	}
@@ -450,7 +461,7 @@ func resealKeyToModeenvImpl(rootdir string, modeenv *Modeenv, expectReseal bool,
 
 var resealKeyToModeenvUsingFDESetupHook = resealKeyToModeenvUsingFDESetupHookImpl
 
-func resealKeyToModeenvUsingFDESetupHookImpl(rootdir string, modeenv *Modeenv, expectReseal bool) error {
+func resealKeyToModeenvUsingFDESetupHookImpl(rootdir string, modeenv *Modeenv, options *ResealToModeenvOptions) error {
 	// TODO: we need to implement reseal at least in terms of
 	//       rebinding the keys to models on remodeling
 
@@ -472,7 +483,7 @@ func resealKeyToModeenvUsingFDESetupHookImpl(rootdir string, modeenv *Modeenv, e
 }
 
 // TODO:UC20: allow more than one model to accommodate the remodel scenario
-func resealKeyToModeenvSecboot(rootdir string, modeenv *Modeenv, expectReseal bool) error {
+func resealKeyToModeenvSecboot(rootdir string, modeenv *Modeenv, options *ResealToModeenvOptions) error {
 	// build the recovery mode boot chain
 	rbl, err := bootloader.Find(InitramfsUbuntuSeedDir, &bootloader.Options{
 		Role: bootloader.RoleRecovery,
@@ -539,12 +550,33 @@ func resealKeyToModeenvSecboot(rootdir string, modeenv *Modeenv, expectReseal bo
 		bootloader.RoleRunMode:  bl.Name(),
 	}
 	saveFDEDir := dirs.SnapFDEDirUnderSave(dirs.SnapSaveDirUnder(rootdir))
+
+	var authKey *ecdsa.PrivateKey
+	if options.Force {
+		lockoutAuthFile := device.TpmLockoutAuthUnder(saveFDEDir)
+		tpmProvisionMode := secboot.TPMProvisionFull
+		if err := secbootProvisionTPM(tpmProvisionMode, lockoutAuthFile); err != nil {
+			return err
+		}
+
+		authKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return fmt.Errorf("cannot generate key for signing dynamic authorization policies: %w", err)
+		}
+		if err := secbootReleasePCRResourceHandles(
+			secboot.RunObjectPCRPolicyCounterHandle,
+			secboot.FallbackObjectPCRPolicyCounterHandle,
+		); err != nil {
+			return fmt.Errorf("cannot cleanup resource handles: %w", err)
+		}
+	}
+
 	authKeyFile := filepath.Join(saveFDEDir, "tpm-policy-auth-key")
 
 	// reseal the run object
 	pbc := toPredictableBootChains(append(runModeBootChains, recoveryBootChainsForRunKey...))
 
-	needed, nextCount, err := isResealNeeded(pbc, bootChainsFileUnder(rootdir), expectReseal)
+	needed, nextCount, err := isResealNeeded(pbc, bootChainsFileUnder(rootdir), options)
 	if err != nil {
 		return err
 	}
@@ -552,8 +584,19 @@ func resealKeyToModeenvSecboot(rootdir string, modeenv *Modeenv, expectReseal bo
 		pbcJSON, _ := json.Marshal(pbc)
 		logger.Debugf("resealing (%d) to boot chains: %s", nextCount, pbcJSON)
 
-		if err := resealRunObjectKeys(pbc, authKeyFile, roleToBlName); err != nil {
-			return err
+		if options.Force {
+			key, ok := options.KeyForRole[gadget.SystemData]
+			if !ok {
+				return fmt.Errorf("Missing key")
+			}
+			runObjectKeyPCRHandle := uint32(secboot.RunObjectPCRPolicyCounterHandle)
+			if err := sealRunObjectKeys(key, pbc, authKey, roleToBlName, runObjectKeyPCRHandle); err != nil {
+				return err
+			}
+		} else {
+			if err := resealRunObjectKeys(pbc, authKeyFile, roleToBlName); err != nil {
+				return err
+			}
 		}
 		logger.Debugf("resealing (%d) succeeded", nextCount)
 
@@ -569,7 +612,7 @@ func resealKeyToModeenvSecboot(rootdir string, modeenv *Modeenv, expectReseal bo
 	rpbc := toPredictableBootChains(recoveryBootChains)
 
 	var nextFallbackCount int
-	needed, nextFallbackCount, err = isResealNeeded(rpbc, recoveryBootChainsFileUnder(rootdir), expectReseal)
+	needed, nextFallbackCount, err = isResealNeeded(rpbc, recoveryBootChainsFileUnder(rootdir), options)
 	if err != nil {
 		return err
 	}
@@ -577,10 +620,26 @@ func resealKeyToModeenvSecboot(rootdir string, modeenv *Modeenv, expectReseal bo
 		rpbcJSON, _ := json.Marshal(rpbc)
 		logger.Debugf("resealing (%d) to recovery boot chains: %s", nextFallbackCount, rpbcJSON)
 
-		if err := resealFallbackObjectKeys(rpbc, authKeyFile, roleToBlName); err != nil {
-			return err
+		if options.Force {
+			key, ok := options.KeyForRole[gadget.SystemData]
+			if !ok {
+				return fmt.Errorf("Missing key")
+			}
+			saveKey, ok := options.KeyForRole[gadget.SystemSave]
+			if !ok {
+				return fmt.Errorf("Missing key")
+			}
+			fallbackObjectKeyPCRHandle := uint32(secboot.FallbackObjectPCRPolicyCounterHandle)
+			const factoryReset = false
+			if err := sealFallbackObjectKeys(key, saveKey, rpbc, authKey, roleToBlName, factoryReset, fallbackObjectKeyPCRHandle); err != nil {
+				return err
+			}
+		} else {
+			if err := resealFallbackObjectKeys(rpbc, authKeyFile, roleToBlName); err != nil {
+				return err
+			}
+			logger.Debugf("fallback resealing (%d) succeeded", nextFallbackCount)
 		}
-		logger.Debugf("fallback resealing (%d) succeeded", nextFallbackCount)
 
 		recoveryBootChainsPath := recoveryBootChainsFileUnder(rootdir)
 		if err := writeBootChains(rpbc, recoveryBootChainsPath, nextFallbackCount); err != nil {
@@ -891,17 +950,21 @@ func sealKeyModelParams(pbc predictableBootChains, roleToBlName map[bootloader.R
 // together with the boot chains.
 // A hint expectReseal can be provided, it is used when the matching
 // is ambigous because the boot chains contain unrevisioned kernels.
-func isResealNeeded(pbc predictableBootChains, bootChainsFile string, expectReseal bool) (ok bool, nextCount int, err error) {
+func isResealNeeded(pbc predictableBootChains, bootChainsFile string, options *ResealToModeenvOptions) (ok bool, nextCount int, err error) {
 	previousPbc, c, err := readBootChains(bootChainsFile)
 	if err != nil {
 		return false, 0, err
+	}
+
+	if options.Force {
+		return true, c + 1, nil
 	}
 
 	switch predictableBootChainsEqualForReseal(pbc, previousPbc) {
 	case bootChainEquivalent:
 		return false, c + 1, nil
 	case bootChainUnrevisioned:
-		return expectReseal, c + 1, nil
+		return options.ExpectReseal, c + 1, nil
 	case bootChainDifferent:
 	}
 	return true, c + 1, nil
