@@ -1229,14 +1229,35 @@ EOF
     fi
 
     # download the core20 snap manually from the specified channel for UC20
-    if os.query os.query is-core-ge 20; then
-        if os.query is-core20; then
+    if os.query is-core-ge 18; then
+        if os.query is-core18; then
+            BASE=core18
+        elif os.query is-core20; then
             BASE=core20
         elif os.query is-core22; then
             BASE=core22
         fi
         snap download "${BASE}" --channel="$BASE_CHANNEL" --basename="${BASE}"
-        
+
+        unsquashfs -d "${BASE}-snap" "${BASE}.snap"
+        case "${BASE}" in
+            core18)
+                # shellcheck disable=SC2016
+                sed '/TMPD=/a [ -d /snap/snapd ] || mkdir -p /snap/snapd; ln -sf "${TMPD}" /snap/snapd/current' -i "${BASE}-snap/usr/lib/core18/run-snapd-from-snap"
+                ;;
+            core*)
+                # shellcheck disable=SC2016
+                sed '/SNAPD_BASE_DIR=/a [ -d /snap/snapd ] || mkdir -p /snap/snapd; ln -sf "${SNAPD_BASE_DIR}" /snap/snapd/current' -i "${BASE}-snap/usr/lib/core/run-snapd-from-snap"
+                ;;
+            *)
+                echo "Unknown core snap ${BASE}" 1>&2
+                false
+                ;;
+        esac
+        snap pack --filename="${BASE}-repacked.snap" "${BASE}-snap"
+        rm -r "${BASE}-snap"
+        mv "${BASE}-repacked.snap" "${IMAGE_HOME}/${BASE}.snap"
+
         # we want to download the specific channel referenced by $BASE_CHANNEL, 
         # but if we just seed that revision and $BASE_CHANNEL != $IMAGE_CHANNEL,
         # then immediately on booting, snapd will refresh from the revision that
@@ -1251,15 +1272,15 @@ EOF
         # * pc-kernel (to test snap-bootstrap from the branch)
         # * pc (to aid in debugging by modifying the kernel command line)
         # * core20 (to avoid the automatic refresh issue)
-        if [ "$IMAGE_CHANNEL" != "$BASE_CHANNEL" ]; then
-            unsquashfs -d "${BASE}-snap" "${BASE}.snap"
-            snap pack --filename="${BASE}-repacked.snap" "${BASE}-snap"
-            rm -r "${BASE}-snap"
-            mv "${BASE}-repacked.snap" "${IMAGE_HOME}/${BASE}.snap"
-        else 
-            mv "${BASE}.snap" "${IMAGE_HOME}/${BASE}.snap"
-        fi
-        
+        #if [ "$IMAGE_CHANNEL" != "$BASE_CHANNEL" ]; then
+        #    unsquashfs -d "${BASE}-snap" "${BASE}.snap"
+        #    snap pack --filename="${BASE}-repacked.snap" "${BASE}-snap"
+        #    rm -r "${BASE}-snap"
+        #    mv "${BASE}-repacked.snap" "${IMAGE_HOME}/${BASE}.snap"
+        #else 
+        #    mv "${BASE}.snap" "${IMAGE_HOME}/${BASE}.snap"
+        #fi
+
         EXTRA_FUNDAMENTAL="$EXTRA_FUNDAMENTAL --snap ${IMAGE_HOME}/${BASE}.snap"
     fi
     local UBUNTU_IMAGE="$GOHOME"/bin/ubuntu-image
