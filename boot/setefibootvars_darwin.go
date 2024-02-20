@@ -24,7 +24,3 @@ import "github.com/snapcore/snapd/osutil"
 func SetEfiBootVariables(description string, assetPath string, optionalData []byte) error {
 	return osutil.ErrDarwin
 }
-
-func setUbuntuSeedEfiBootVariables() error {
-	return osutil.ErrDarwin
-}

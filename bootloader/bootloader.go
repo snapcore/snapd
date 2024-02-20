@@ -265,7 +265,7 @@ type UefiBootloader interface {
 
 	// EfiLoadOptionParameters returns the data which may be used to construct
 	// an EFI load option.
-	EfiLoadOptionParameters() (description string, assetPath string, optionalData []byte, err error)
+	EfiLoadOptionParameters(updatedAssets []string) (description string, assetPath string, optionalData []byte, err error)
 }
 
 func genericInstallBootConfig(gadgetFile, systemFile string) error {
