@@ -163,6 +163,19 @@ type Volume struct {
 	Name string `json:"-"`
 }
 
+// VolumesHaveRole checks if any of the volumes has a structure with the given
+// role.
+func VolumesHaveRole(volumes map[string]*Volume, role string) bool {
+	for _, v := range volumes {
+		for _, s := range v.Structure {
+			if s.Role == role {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // HasPartial checks if the volume has a partially defined part.
 func (v *Volume) HasPartial(pp PartialProperty) bool {
 	for _, vp := range v.Partial {
