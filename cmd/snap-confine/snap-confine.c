@@ -476,7 +476,7 @@ int main(int argc, char **argv)
         // Distributions using libhybris might want to have a say in the environment
         // variables preparing hybris support correctly. If GL is not permitted the
         // variables won't be of much use, but still set them up here.
-        if (access("/system/build.prop", F_OK) == 0) {
+        if (!invocation.classic_confinement && access("/system/build.prop", F_OK) == 0) {
             setenv("HYBRIS_LINKER_DIR", "/var/lib/snapd/lib/gl/libhybris/linker", 1);
             setenv("HYBRIS_EGLPLATFORM_DIR", "/var/lib/snapd/lib/gl/libhybris", 1);
         }
