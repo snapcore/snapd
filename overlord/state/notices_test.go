@@ -281,6 +281,8 @@ func (s *noticesSuite) TestNoticesFilterType(c *C) {
 
 	addNotice(c, st, nil, state.RefreshInhibitNotice, "-", nil)
 	time.Sleep(time.Microsecond)
+	addNotice(c, st, nil, state.RequestsPromptNotice, "443", nil)
+	time.Sleep(time.Microsecond)
 	addNotice(c, st, nil, state.ChangeUpdateNotice, "123", nil)
 	time.Sleep(time.Microsecond)
 	addNotice(c, st, nil, state.WarningNotice, "Warning 1!", nil)
@@ -289,11 +291,11 @@ func (s *noticesSuite) TestNoticesFilterType(c *C) {
 
 	// No filter
 	notices := st.Notices(nil)
-	c.Assert(notices, HasLen, 4)
+	c.Assert(notices, HasLen, 5)
 
 	// No types
 	notices = st.Notices(&state.NoticeFilter{})
-	c.Assert(notices, HasLen, 4)
+	c.Assert(notices, HasLen, 5)
 
 	// One type
 	notices = st.Notices(&state.NoticeFilter{Types: []state.NoticeType{state.WarningNotice}})
@@ -308,14 +310,6 @@ func (s *noticesSuite) TestNoticesFilterType(c *C) {
 	c.Check(n["key"], Equals, "Warning 2!")
 
 	// Another type
-	notices = st.Notices(&state.NoticeFilter{Types: []state.NoticeType{state.ChangeUpdateNotice}})
-	c.Assert(notices, HasLen, 1)
-	n = noticeToMap(c, notices[0])
-	c.Check(n["user-id"], Equals, nil)
-	c.Check(n["type"], Equals, "change-update")
-	c.Check(n["key"], Equals, "123")
-
-	// Another type
 	notices = st.Notices(&state.NoticeFilter{Types: []state.NoticeType{state.RefreshInhibitNotice}})
 	c.Assert(notices, HasLen, 1)
 	n = noticeToMap(c, notices[0])
@@ -326,13 +320,13 @@ func (s *noticesSuite) TestNoticesFilterType(c *C) {
 	// Multiple types
 	notices = st.Notices(&state.NoticeFilter{Types: []state.NoticeType{
 		state.ChangeUpdateNotice,
-		state.RefreshInhibitNotice,
+		state.RequestsPromptNotice,
 	}})
 	c.Assert(notices, HasLen, 2)
 	n = noticeToMap(c, notices[0])
 	c.Check(n["user-id"], Equals, nil)
-	c.Check(n["type"], Equals, "refresh-inhibit")
-	c.Check(n["key"], Equals, "-")
+	c.Check(n["type"], Equals, "interfaces-requests-prompt")
+	c.Check(n["key"], Equals, "443")
 	n = noticeToMap(c, notices[1])
 	c.Check(n["user-id"], Equals, nil)
 	c.Check(n["type"], Equals, "change-update")

@@ -6,6 +6,10 @@
 * state: add support for notices (from pebble)
 * daemon: add notices to the snapd API under `/v2/notices` and `/v2/notice`
 
+# New in snapd 2.99.2:
+* Apparmor prompting support
+* This is an arbitrary high version number so this version will always have priority over other snapd installs
+
 # New in snapd 2.61.2:
 * Fix to enable plug/slot sanitization for prepare-image
 * Fix panic when device-service.access=offline
