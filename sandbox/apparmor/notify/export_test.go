@@ -10,3 +10,5 @@ func MockSyscall(syscall func(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err uni
 	restore = func() { doSyscall = old }
 	return restore
 }
+
+var ExplicitlyUnsupported = &explicitlyUnsupported

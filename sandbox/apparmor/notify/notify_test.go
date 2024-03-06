@@ -35,6 +35,7 @@ func (*notifySuite) TestSysPathBehavior(c *C) {
 }
 
 func (*notifySuite) TestSupportAvailable(c *C) {
+	*notify.ExplicitlyUnsupported = false
 	newRoot := c.MkDir()
 	dirs.SetRootDir(newRoot)
 	c.Assert(notify.SupportAvailable(), Equals, false)
@@ -44,4 +45,6 @@ func (*notifySuite) TestSupportAvailable(c *C) {
 	_, err = os.Create(notify.SysPath)
 	c.Assert(err, IsNil)
 	c.Assert(notify.SupportAvailable(), Equals, true)
+	*notify.ExplicitlyUnsupported = true
+	c.Assert(notify.SupportAvailable(), Equals, false)
 }
