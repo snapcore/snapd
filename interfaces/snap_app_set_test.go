@@ -1,13 +1,17 @@
 package interfaces_test
 
 import (
+	"github.com/snapcore/snapd/dirs"
 	"github.com/snapcore/snapd/interfaces"
 	"github.com/snapcore/snapd/snap"
 	"github.com/snapcore/snapd/snap/snaptest"
+	"github.com/snapcore/snapd/testutil"
 	. "gopkg.in/check.v1"
 )
 
-type snapAppSetSuite struct{}
+type snapAppSetSuite struct {
+	testutil.BaseTest
+}
 
 var _ = Suite(&snapAppSetSuite{})
 
@@ -31,6 +35,12 @@ hooks:
   post-refresh:
     plugs: [network, network-manager]
 `
+
+func (s *snapAppSetSuite) SetUpTest(c *C) {
+	s.BaseTest.SetUpTest(c)
+	dirs.SetRootDir(c.MkDir())
+	s.AddCleanup(func() { dirs.SetRootDir("") })
+}
 
 func (s *snapAppSetSuite) TestPlugLabelExpr(c *C) {
 	info, connectedPlug := mockInfoAndConnectedPlug(c, yaml, nil, "network")
@@ -228,6 +238,50 @@ slots:
 
 	_, err = set.SecurityTagsForConnectedSlot(connectedSlot)
 	c.Assert(err, ErrorMatches, `internal error: slot "slot" is from snap "other-name", security tags can only be computed for processed target snap: "name"`)
+}
+
+func (s *snapAppSetSuite) TestRunnables(c *C) {
+	const yaml = `name: name
+version: 1
+apps:
+  app1:
+  app2:
+hooks:
+  install:
+components:
+  comp:
+    hooks:
+      install:
+`
+	info := snaptest.MockInfo(c, yaml, nil)
+
+	compInfo := snaptest.MockComponent(c, "component: name+comp\ntype: test\nversion: 1.0", info)
+
+	set, err := interfaces.NewSnapAppSet(info, []*snap.ComponentInfo{compInfo})
+	c.Assert(err, IsNil)
+
+	c.Check(set.Runnables(), DeepEquals, []interfaces.Runnable{
+		{
+			CommandName: "app1",
+			SecurityTag: "snap.name.app1",
+			Type:        interfaces.RunnableApp,
+		},
+		{
+			CommandName: "app2",
+			SecurityTag: "snap.name.app2",
+			Type:        interfaces.RunnableApp,
+		},
+		{
+			CommandName: "hook.install",
+			SecurityTag: "snap.name.hook.install",
+			Type:        interfaces.RunnableHook,
+		},
+		{
+			CommandName: "name+comp.hook.install",
+			SecurityTag: "snap.name+comp.hook.install",
+			Type:        interfaces.RunnableComponentHook,
+		},
+	})
 }
 
 func (s *snapAppSetSuite) TestInfo(c *C) {
