@@ -473,13 +473,6 @@ int main(int argc, char **argv)
 	// For classic and confined snaps
 	sc_selinux_set_snap_execcon();
 #endif
-        // Distributions using libhybris might want to have a say in the environment
-        // variables preparing hybris support correctly. If GL is not permitted the
-        // variables won't be of much use, but still set them up here.
-        if (!invocation.classic_confinement && access(SC_HYBRIS_PROPERTY_FILE, F_OK) == 0) {
-            setenv("HYBRIS_LINKER_DIR", "/var/lib/snapd/lib/gl/libhybris/linker", 1);
-            setenv("HYBRIS_EGLPLATFORM_DIR", "/var/lib/snapd/lib/gl/libhybris", 1);
-        }
 
 	if (snap_context != NULL) {
 		setenv("SNAP_COOKIE", snap_context, 1);
