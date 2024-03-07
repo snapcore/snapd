@@ -3,7 +3,7 @@
 // +build !nomanagers
 
 /*
- * Copyright (C) 2017-2024 Canonical Ltd
+ * Copyright (C) 2024 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -33,13 +33,15 @@ import (
 func doExperimentalApparmorPromptProfileRegeneration(c RunTransaction, opts *fsOnlyContext) error {
 	st := c.State()
 
+	snap, confName := features.AppArmorPrompting.ConfigOption()
+
 	var prompting bool
-	err := c.Get("core", "experimental."+features.AppArmorPrompting.String(), &prompting)
+	err := c.Get(snap, confName, &prompting)
 	if err != nil && !config.IsNoOption(err) {
 		return err
 	}
 	var prevPrompting bool
-	err = c.GetPristine("core", "experimental."+features.AppArmorPrompting.String(), &prevPrompting)
+	err = c.GetPristine(snap, confName, &prevPrompting)
 	if err != nil && !config.IsNoOption(err) {
 		return err
 	}

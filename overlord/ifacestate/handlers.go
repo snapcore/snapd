@@ -1970,9 +1970,5 @@ func (m *InterfaceManager) doRegenerateAllSecurityProfiles(task *state.Task, _ *
 	perfTimings := state.TimingsForTask(task)
 	defer perfTimings.Save(task.State())
 
-	if err := m.regenerateAllSecurityProfiles(perfTimings); err != nil {
-		return err
-	}
-
-	return nil
+	return m.regenerateAllSecurityProfiles(perfTimings)
 }
