@@ -368,3 +368,44 @@ plugs:
 	c.Check(preRefreshHook.Plugs, HasLen, 1)
 	c.Check(preRefreshHook.Plugs["network-client"], NotNil)
 }
+
+func (s *componentSuite) TestHooksForPlug(c *C) {
+	const snapYaml = `
+name: snap
+version: 1
+apps:
+ one:
+   command: one
+   plugs: [app-plug]
+components:
+  comp:
+    hooks:
+      install:
+        plugs: [scoped-plug]
+      pre-refresh:
+plugs:
+  unscoped-plug:
+  app-plug:
+`
+	const componentYaml = `
+component: snap+comp
+type: test
+version: 1
+`
+
+	info := snaptest.MockSnap(c, snapYaml, &snap.SideInfo{Revision: snap.R(1)})
+
+	componentInfo := snaptest.MockComponent(c, componentYaml, info)
+
+	scoped := info.Plugs["scoped-plug"]
+	c.Assert(scoped, NotNil)
+
+	scopedHooks := componentInfo.HooksForPlug(scoped)
+	c.Assert(scopedHooks, testutil.DeepUnsortedMatches, []*snap.HookInfo{componentInfo.Hooks["install"]})
+
+	unscoped := info.Plugs["unscoped-plug"]
+	c.Assert(unscoped, NotNil)
+
+	unscopedHooks := componentInfo.HooksForPlug(unscoped)
+	c.Assert(unscopedHooks, testutil.DeepUnsortedMatches, []*snap.HookInfo{componentInfo.Hooks["install"], componentInfo.Hooks["pre-refresh"]})
+}
