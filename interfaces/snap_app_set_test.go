@@ -168,6 +168,10 @@ version: 1
 apps:
   app1:
   app2:
+components:
+  comp:
+    hooks:
+      install:
 hooks:
   install:
 plugs:
@@ -182,7 +186,12 @@ slots:
 
 	tags, err := set.SecurityTagsForConnectedPlug(connectedPlug)
 	c.Assert(err, IsNil)
-	c.Assert(tags, DeepEquals, []string{"snap.name.app1", "snap.name.app2", "snap.name.hook.install"})
+	c.Assert(tags, DeepEquals, []string{
+		"snap.name+comp.hook.install",
+		"snap.name.app1",
+		"snap.name.app2",
+		"snap.name.hook.install",
+	})
 }
 
 func (s *snapAppSetSuite) TestPlugSecurityTagsWrongSnap(c *C) {
