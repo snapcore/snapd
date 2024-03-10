@@ -9928,17 +9928,22 @@ func (s *snapmgrTestSuite) TestCleanDownloadsKeepsNewDownloads(c *C) {
 
 func (s *snapmgrTestSuite) TestRefreshInhibitProceedTime(c *C) {
 	snapst := snapstate.SnapState{}
+	st := s.state
+	st.Lock()
+	defer st.Unlock()
+
 	// No pending refresh
 	c.Check(snapst.RefreshInhibitProceedTime(s.state).IsZero(), Equals, true)
 
 	// Refresh inhibited
 	refreshInhibitedTime := time.Date(2024, 2, 12, 18, 36, 56, 0, time.UTC)
 	snapst.RefreshInhibitedTime = &refreshInhibitedTime
-	expectedRefreshInhibitProceedTime := refreshInhibitedTime.Add(snapstate.MaxInhibition)
+	expectedRefreshInhibitProceedTime := refreshInhibitedTime.Add(snapstate.MaxInhibitionDuration(st))
 	c.Check(snapst.RefreshInhibitProceedTime(s.state), Equals, expectedRefreshInhibitProceedTime)
 }
 
 func (s *snapmgrTestSuite) TestChangeStatusRecordsChangeUpdateNotice(c *C) {
+
 	st := s.state
 	st.Lock()
 	defer st.Unlock()
@@ -10022,4 +10027,24 @@ func noticeToMap(c *C, notice *state.Notice) map[string]any {
 	err = json.Unmarshal(buf, &n)
 	c.Assert(err, IsNil)
 	return n
+}
+
+func (s *refreshSuite) TestSetMaxInhibitionDays(c *C) {
+	st := s.state
+	st.Lock()
+	defer st.Unlock()
+
+	tr := config.NewTransaction(st)
+	var maxInhibitionDays int
+	tr.Get("core", "refresh.max-inhibition-days", &maxInhibitionDays)
+	c.Assert(maxInhibitionDays, Equals, 0)
+	maxInhibitionDuration := snapstate.MaxInhibitionDuration(st)
+	c.Assert(maxInhibitionDuration, Equals, 14*24*time.Hour-time.Second)
+	err := tr.Set("core", "refresh.max-inhibition-days", 10)
+	c.Assert(err, IsNil)
+	tr.Commit()
+	tr.Get("core", "refresh.max-inhibition-days", &maxInhibitionDays)
+	c.Assert(maxInhibitionDays, Equals, 10)
+	maxInhibitionDuration = snapstate.MaxInhibitionDuration(st)
+	c.Assert(maxInhibitionDuration, Equals, 10*24*time.Hour-time.Second)
 }
