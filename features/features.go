@@ -72,6 +72,8 @@ const (
 	RefreshAppAwarenessUX
 	// AspectsConfiguration enables experimental aspect-based configuration.
 	AspectsConfiguration
+	// Prompting enables apparmor prompting.
+	AppArmorPrompting
 
 	// lastFeature is the final known feature, it is only used for testing.
 	lastFeature
@@ -115,6 +117,8 @@ var featureNames = map[SnapdFeature]string{
 
 	RefreshAppAwarenessUX: "refresh-app-awareness-ux",
 	AspectsConfiguration:  "aspects-configuration",
+
+	AppArmorPrompting: "apparmor-prompting",
 }
 
 // featuresEnabledWhenUnset contains a set of features that are enabled when not explicitly configured.
@@ -139,6 +143,8 @@ var featuresExported = map[SnapdFeature]bool{
 
 	RefreshAppAwarenessUX: true,
 	AspectsConfiguration:  true,
+
+	AppArmorPrompting: true,
 }
 
 // String returns the name of a snapd feature.

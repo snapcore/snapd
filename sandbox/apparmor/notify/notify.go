@@ -10,10 +10,16 @@ import (
 
 var SysPath string
 
+// Until other prompting components are in place, mark support as unavailable
+// explicitly, even if the kernel has support.
+// TODO: Delete this or set to false once the necessary AppArmor Prompting
+// components are in place.
+var explicitlyUnsupported = true
+
 // SupportAvailable returns true if SysPath exists, indicating that apparmor
 // prompting messages may be received from SysPath.
 func SupportAvailable() bool {
-	return osutil.FileExists(SysPath)
+	return !explicitlyUnsupported && osutil.FileExists(SysPath)
 }
 
 func setupSysPath(newrootdir string) {
