@@ -60,6 +60,9 @@ func expectedComponentInstallTasks(opts int) []string {
 	if opts&compOptIsActive != 0 {
 		startTasks = append(startTasks, "unlink-current-component")
 	}
+
+	startTasks = append(startTasks, "setup-profiles")
+
 	// link-component is always present
 	startTasks = append(startTasks, "link-component")
 
