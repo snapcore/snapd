@@ -2064,11 +2064,11 @@ func (s *snapmgrTestSuite) TestEnsureDependencyRemovalBaseSnap(c *C) {
 	defer s.state.Unlock()
 
 	snapstate.Set(s.state, "some-base", &snapstate.SnapState{
-		Sequence: []*snap.SideInfo{{
+		Sequence: snapstatetest.NewSequenceFromSnapSideInfos([]*snap.SideInfo{{
 			RealName: "some-base",
 			SnapID:   "some-base-id",
 			Revision: snap.R(1),
-		}},
+		}}),
 		Flags: snapstate.Flags{
 			ImplicitlyInstalled: true,
 		},
