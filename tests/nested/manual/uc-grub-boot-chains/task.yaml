@@ -77,8 +77,7 @@ execute: |
   remote.exec "[ -f /boot/efi/EFI/ubuntu/shimx64.efi ]"
   remote.exec "[ -f /boot/efi/EFI/ubuntu/bootx64.csv ]"
 
-  #FIXME: We do not remove old assets yet
-  #remote.exec "! [ -f /boot/efi/EFI/boot/grubx64.efi ]"
+  remote.exec "! [ -f /boot/efi/EFI/boot/grubx64.efi ]"
   remote.exec "sudo rm -f /boot/efi/EFI/boot/grubx64.efi"
 
   # Make sure we can still boot
@@ -91,11 +90,8 @@ execute: |
   # Let's "downgrade"!
   remote.push pc_x3.snap
   boot_id=$(tests.nested boot-id)
-  # FIXME: this does not work yet since we do not delete yet content
-  # that are not on newly installed gadget snap while defined in
-  # previous gadget snap. As a work-around we remove the files
-  # manually.
-  remote.exec sudo systemd-inhibit --what=shutdown bash -c "'snap install --dangerous pc_x3.snap; rm -f /boot/efi/EFI/ubuntu/grubx64.efi /boot/efi/EFI/boot/fbx64.efi /boot/efi/EFI/ubuntu/shimx64.efi'"
+  install_change=$(remote.exec sudo snap install --dangerous pc_x3.snap --no-wait)
   remote.wait-for reboot "$boot_id"
+  remote.exec sudo snap watch "${install_change}"
   remote.exec "[ -f /boot/efi/EFI/boot/grubx64.efi ]"
-  retry --wait 4 -n 100 sh -c 'remote.exec "! [ -f /boot/efi/EFI/ubuntu/grubx64.efi ]"'
+  remote.exec "! [ -f /boot/efi/EFI/ubuntu/grubx64.efi ]"
