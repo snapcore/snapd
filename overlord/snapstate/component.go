@@ -50,7 +50,7 @@ func InstallComponentPath(st *state.State, csi *snap.ComponentSideInfo, info *sn
 	}
 
 	// Read ComponentInfo
-	compInfo, _, err := backend.OpenComponentFile(path)
+	compInfo, _, err := backend.OpenComponentFile(path, info)
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +185,11 @@ func doInstallComponent(st *state.State, snapst *SnapState, compSetup *Component
 		fmt.Sprintf(i18n.G("Make component %q%s available to the system"),
 			compSi.Component, revisionStr))
 	addTask(linkSnap)
+
+	if !compInstalled {
+		installHook := SetupInstallComponentHook(st, snapsup.InstanceName(), compSi.Component.ComponentName)
+		addTask(installHook)
+	}
 
 	installSet := state.NewTaskSet(tasks...)
 	installSet.MarkEdge(prepare, BeginEdge)
