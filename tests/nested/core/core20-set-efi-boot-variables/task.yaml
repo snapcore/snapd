@@ -4,7 +4,10 @@ details: >
     This test uses snapd as a library to set UEFI boot entries. This
     is useful for installers.
 
-systems: [ubuntu-2*]
+systems:
+  - ubuntu-20.04-64
+  - ubuntu-22.04-64
+  - ubuntu-24.04-64
 
 prepare: |
     "$(command -v go)" build -o setefivars setefivars.go
