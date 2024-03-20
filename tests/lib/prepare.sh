@@ -449,7 +449,11 @@ build_snapd_snap() {
     TARGET="${1}"
     [ -d "${TARGET}" ] || mkdir "${TARGET}"
     chmod -R go+r "${PROJECT_PATH}/tests"
-    run_snapcraft --use-lxd --verbosity quiet
+    if ! run_snapcraft --use-lxd --verbosity quiet; then
+        # shellcheck disable=SC2012
+        tail -n1000 "${HOME}/.local/state/snapcraft/log/$(ls -t "${HOME}/.local/state/snapcraft/log/" -1 | head -n1)"
+        false
+    fi
     mv "${PROJECT_PATH}"/snapd_*.snap "${TARGET}/"
 }
 
@@ -457,7 +461,11 @@ build_snapd_snap_with_run_mode_firstboot_tweaks() {
     local TARGET
     TARGET="${1}"
     chmod -R go+r "${PROJECT_PATH}/tests"
-    run_snapcraft --use-lxd --verbosity quiet --output="snapd_from_snapcraft.snap"
+    if ! run_snapcraft --use-lxd --verbosity quiet --output="snapd_from_snapcraft.snap"; then
+        # shellcheck disable=SC2012
+        tail -n1000 "${HOME}/.local/state/snapcraft/log/$(ls -t "${HOME}/.local/state/snapcraft/log/" -1 | head -n1)"
+        false
+    fi
     mv "${PROJECT_PATH}/snapd_from_snapcraft.snap" "/tmp/snapd_from_snapcraft.snap"
     local UNPACK_DIR="/tmp/snapd-unpack"
     unsquashfs -no-progress -d "$UNPACK_DIR" /tmp/snapd_from_snapcraft.snap
