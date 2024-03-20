@@ -1,7 +1,8 @@
 summary: Tests for the code that sets EFI boot variables, as if it were a library separate from snapd
 
-details: |
-  TODO
+details: >
+    This test uses snapd as a library to set UEFI boot entries. This
+    is useful for installers.
 
 systems: [ubuntu-2*]
 
