@@ -12,8 +12,6 @@ systems:
 prepare: |
     "$(command -v go)" build -o setefivars setefivars.go
 
-    VERSION=$(tests.nested show version)
-
     echo "Wait for the system to be seeded"
     remote.exec "sudo snap wait system seed.loaded"
 
