@@ -26,16 +26,10 @@ import (
 	"github.com/snapcore/snapd/systemd"
 )
 
-func addMountUnit(c snap.ContainerPlaceInfo, mountFlags systemd.EnsureMountUnitFlags, preseed bool, meter progress.Meter) error {
+func addMountUnit(c snap.ContainerPlaceInfo, mountFlags systemd.EnsureMountUnitFlags, sysd systemd.Systemd) error {
 	squashfsPath := dirs.StripRootDir(c.MountFile())
 	whereDir := dirs.StripRootDir(c.MountDir())
 
-	var sysd systemd.Systemd
-	if preseed {
-		sysd = systemd.NewEmulationMode(dirs.GlobalRootDir)
-	} else {
-		sysd = systemd.New(systemd.SystemMode, meter)
-	}
 	_, err := sysd.EnsureMountUnitFile(c.MountDescription(), squashfsPath, whereDir, "squashfs",
 		mountFlags)
 	return err

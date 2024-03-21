@@ -120,7 +120,7 @@ func (s *mountunitSuite) testAddMountUnit(c *C, flags systemd.EnsureMountUnitFla
 		Version:       "1.1",
 		Architectures: []string{"all"},
 	}
-	err := backend.AddMountUnit(info, flags, false, progress.Null)
+	err := backend.AddMountUnit(info, flags, systemd.New(systemd.SystemMode, progress.Null))
 	c.Check(err, Equals, expectedErr)
 
 	// ensure correct parameters

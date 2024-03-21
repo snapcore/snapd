@@ -30,7 +30,6 @@ import (
 	"github.com/snapcore/snapd/kernel"
 	"github.com/snapcore/snapd/logger"
 	"github.com/snapcore/snapd/osutil"
-	"github.com/snapcore/snapd/osutil/squashfs"
 	"github.com/snapcore/snapd/progress"
 	"github.com/snapcore/snapd/snap"
 	"github.com/snapcore/snapd/snap/naming"
@@ -107,7 +106,7 @@ func (b Backend) SetupSnap(snapFilePath, instanceName string, sideInfo *snap.Sid
 		PreventRestartIfModified: false,
 		StartBeforeDriversLoad:   t == snap.TypeKernel,
 	}
-	if err := addMountUnit(s, mountFlags, b.preseed, meter); err != nil {
+	if err := addMountUnit(s, mountFlags, newSystemd(b.preseed, meter)); err != nil {
 		return snapType, nil, err
 	}
 
@@ -121,66 +120,16 @@ func (b Backend) SetupSnap(snapFilePath, instanceName string, sideInfo *snap.Sid
 	return t, installRecord, nil
 }
 
-func earlyMountOptions() []string {
-	return append([]string{"nodev"}, squashfs.StandardOptions()...)
-}
-
 // SetupKernelSnap does extra configuration for kernel snaps.
 func (b Backend) SetupKernelSnap(instanceName string, rev snap.Revision, meter progress.Meter) (err error) {
-	var sysd systemd.Systemd
-	if b.preseed {
-		sysd = systemd.NewEmulationMode(dirs.GlobalRootDir)
-	} else {
-		sysd = systemd.New(systemd.SystemMode, meter)
-	}
-
-	// Create early mount for the snap
-	cpi := snap.MinimalSnapContainerPlaceInfo(instanceName, rev)
-
-	earlyMountDir := kernel.EarlyKernelMountDir(instanceName, rev)
-	addMountUnitOptions := &systemd.MountUnitOptions{
-		MountUnitType: systemd.BeforeDriversLoadMountUnit,
-		Lifetime:      systemd.Persistent,
-		Description:   "Early mount unit for kernel snap",
-		What:          cpi.MountFile(),
-		Where:         dirs.StripRootDir(earlyMountDir),
-		Fstype:        "squashfs",
-		Options:       earlyMountOptions(),
-	}
-	_, err = sysd.EnsureMountUnitFileWithOptions(addMountUnitOptions)
-	if err != nil {
-		return fmt.Errorf("cannot create mount in %q: %w", earlyMountDir, err)
-	}
-
-	// Clean-up mount if the kernel tree cannot be built
-	defer func() {
-		if err == nil {
-			return
-		}
-		if e := sysd.RemoveMountUnitFile(earlyMountDir); e != nil {
-			meter.Notify(fmt.Sprintf("while trying to clean up due to previous failure: %v", e))
-		}
-	}()
-
 	// Build kernel tree that will be mounted from initramfs
+	cpi := snap.MinimalSnapContainerPlaceInfo(instanceName, rev)
 	return kernel.EnsureKernelDriversTree(instanceName, rev,
-		earlyMountDir, nil, &kernel.KernelDriversTreeOptions{KernelInstall: true})
+		cpi.MountDir(), nil, &kernel.KernelDriversTreeOptions{KernelInstall: true})
 }
 
 func (b Backend) RemoveKernelSnapSetup(instanceName string, rev snap.Revision, meter progress.Meter) error {
-	if err := kernel.RemoveKernelDriversTree(instanceName, rev); err != nil {
-		return err
-	}
-
-	var sysd systemd.Systemd
-	if b.preseed {
-		sysd = systemd.NewEmulationMode(dirs.GlobalRootDir)
-	} else {
-		sysd = systemd.New(systemd.SystemMode, meter)
-	}
-
-	earlyMountDir := kernel.EarlyKernelMountDir(instanceName, rev)
-	return sysd.RemoveMountUnitFile(earlyMountDir)
+	return kernel.RemoveKernelDriversTree(instanceName, rev)
 }
 
 // SetupComponent prepares and mounts a component for further processing.
@@ -229,7 +178,7 @@ func (b Backend) SetupComponent(compFilePath string, compPi snap.ContainerPlaceI
 		PreventRestartIfModified: false,
 		StartBeforeDriversLoad:   compInfo.Type == snap.KernelModulesComponent,
 	}
-	if err := addMountUnit(compPi, mountFlags, b.preseed, meter); err != nil {
+	if err := addMountUnit(compPi, mountFlags, newSystemd(b.preseed, meter)); err != nil {
 		return nil, err
 	}
 
@@ -348,10 +297,10 @@ func (b Backend) SetupKernelModulesComponents(compsToInstall, currentComps []*sn
 	sysd := newSystemd(b.preseed, meter)
 
 	// compsToRemove will contain the old revisions of components in compsToInstall
-	newActiveComps, compsToRemove := mergeCompSideInfosUpdatingRev(currentComps, compsToInstall)
+	newActiveComps, _ := mergeCompSideInfosUpdatingRev(currentComps, compsToInstall)
 
-	return moveKModsComponentsState(currentComps, newActiveComps,
-		compsToInstall, compsToRemove, ksnapName, ksnapRev, sysd,
+	return moveKModsComponentsState(
+		currentComps, newActiveComps, ksnapName, ksnapRev, sysd,
 		"after failure to set-up kernel modules components")
 }
 
@@ -362,10 +311,10 @@ func (b Backend) RemoveKernelModulesComponentsSetup(compsToRemove, finalComps []
 
 	// compsToAdd will contain previous revision (that we want to restore)
 	// of compsToRemove
-	currentActiveComps, compsToAdd := mergeCompSideInfosUpdatingRev(finalComps, compsToRemove)
+	currentActiveComps, _ := mergeCompSideInfosUpdatingRev(finalComps, compsToRemove)
 
-	return moveKModsComponentsState(currentActiveComps, finalComps,
-		compsToAdd, compsToRemove, ksnapName, ksnapRev, sysd,
+	return moveKModsComponentsState(
+		currentActiveComps, finalComps, ksnapName, ksnapRev, sysd,
 		"after failure to remove set-up of kernel modules components")
 }
 
@@ -397,109 +346,27 @@ func mergeCompSideInfosUpdatingRev(comps1, comps2 []*snap.ComponentSideInfo) (me
 
 // moveKModsComponentsState changes kernel-modules set-up from currentComps to
 // finalComps, and adds/removes toAdd and toRemove components respectively.
-func moveKModsComponentsState(currentComps, finalComps, toAdd, toRemove []*snap.ComponentSideInfo, ksnapName string, ksnapRev snap.Revision, sysd systemd.Systemd, cleanErrMsg string) (err error) {
-	// method is idempotent as the called methods are too
-
-	// on error: re-create removed mount units, revert kernel tree,
-	// clean-up newly created unit
-	removedMnts := []*snap.ComponentSideInfo{}
-	haveNewTree := false
-	createdMnts := []*snap.ComponentSideInfo{}
-	defer func() {
-		if err == nil {
-			return
-		}
-		cleanupAfterSetupError(removedMnts, createdMnts, haveNewTree,
-			currentComps, ksnapName, ksnapRev, sysd, cleanErrMsg)
-	}()
-
-	// 1. Create new mounts
-	for _, csi := range toAdd {
-		if err := createKModsMount(csi, ksnapName, ksnapRev, sysd); err != nil {
-			return err
-		}
-		createdMnts = append(createdMnts, csi)
-	}
-
-	// 2. Build kernel tree with the components in the final state
+func moveKModsComponentsState(currentComps, finalComps []*snap.ComponentSideInfo, ksnapName string, ksnapRev snap.Revision, sysd systemd.Systemd, cleanErrMsg string) (err error) {
+	cpi := snap.MinimalSnapContainerPlaceInfo(ksnapName, ksnapRev)
 	if err := kernel.EnsureKernelDriversTree(ksnapName, ksnapRev,
-		kernel.EarlyKernelMountDir(ksnapName, ksnapRev), finalComps,
+		cpi.MountDir(), finalComps,
 		&kernel.KernelDriversTreeOptions{KernelInstall: false}); err != nil {
-		return err
-	}
-	haveNewTree = true
 
-	// 3. Remove mounts we do not want anymore
-	for _, csi := range toRemove {
-		if err := removeKModsMount(csi, ksnapName, ksnapRev, sysd); err != nil {
-			return err
-		}
-		removedMnts = append(removedMnts, csi)
-	}
-
-	return nil
-}
-
-func cleanupAfterSetupError(createMnts, removeMnts []*snap.ComponentSideInfo, switchTree bool, currentComps []*snap.ComponentSideInfo, ksnapName string, ksnapRev snap.Revision, sysd systemd.Systemd, msg string) {
-	for _, csi := range createMnts {
-		if e := createKModsMount(csi, ksnapName, ksnapRev, sysd); e != nil {
-			logger.Noticef("while restoring removed mounts %s: %v", msg, e)
-		}
-	}
-	if switchTree {
 		if e := kernel.EnsureKernelDriversTree(ksnapName, ksnapRev,
-			kernel.EarlyKernelMountDir(ksnapName, ksnapRev),
+			cpi.MountDir(),
 			currentComps,
 			&kernel.KernelDriversTreeOptions{
 				KernelInstall: false}); e != nil {
-			logger.Noticef("while restoring kernel tree %s: %v", msg, e)
+			logger.Noticef("while restoring kernel tree %s: %v", cleanErrMsg, e)
 		}
-	}
-	for _, csi := range removeMnts {
-		if e := removeKModsMount(csi, ksnapName, ksnapRev, sysd); e != nil {
-			logger.Noticef("while removing mounts %s: %v", msg, e)
-		}
-	}
-}
 
-func createKModsMount(csi *snap.ComponentSideInfo, ksnapName string, ksnapRev snap.Revision, sysd systemd.Systemd) error {
-	compName := csi.Component.ComponentName
-	compRev := csi.Revision
-	cpi := snap.MinimalComponentContainerPlaceInfo(compName, compRev, ksnapName, ksnapRev)
-	earlyMountDir := kernel.EarlyKernelModsComponentMountDir(
-		compName, compRev, ksnapName, ksnapRev)
-
-	addMountUnitOptions := &systemd.MountUnitOptions{
-		MountUnitType: systemd.BeforeDriversLoadMountUnit,
-		Lifetime:      systemd.Persistent,
-		Description:   "Early mount for kernel-modules component",
-		What:          cpi.MountFile(),
-		Where:         dirs.StripRootDir(earlyMountDir),
-		Fstype:        "squashfs",
-		Options:       earlyMountOptions(),
+		return err
 	}
-	_, err := sysd.EnsureMountUnitFileWithOptions(addMountUnitOptions)
-	if err != nil {
-		return fmt.Errorf("cannot create mount in %q: %w", earlyMountDir, err)
-	}
-	return nil
-}
 
-func removeKModsMount(csi *snap.ComponentSideInfo, ksnapName string, ksnapRev snap.Revision, sysd systemd.Systemd) error {
-	compName := csi.Component.ComponentName
-	compRev := csi.Revision
-	earlyMountDir := kernel.EarlyKernelModsComponentMountDir(
-		compName, compRev, ksnapName, ksnapRev)
-
-	if err := sysd.RemoveMountUnitFile(earlyMountDir); err != nil {
-		return fmt.Errorf("cannot remove mount in %q: %w", earlyMountDir, err)
-	}
 	return nil
 }
 
 func newSystemd(preseed bool, meter progress.Meter) systemd.Systemd {
-	// TODO should we care about preseeding? Installing a component
-	// separately from a snap is probably not happening in that case.
 	if preseed {
 		return systemd.NewEmulationMode(dirs.GlobalRootDir)
 	}
