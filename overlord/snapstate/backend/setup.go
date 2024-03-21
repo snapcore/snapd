@@ -102,11 +102,15 @@ func (b Backend) SetupSnap(snapFilePath, instanceName string, sideInfo *snap.Sid
 	}
 
 	// generate the mount unit for the squashfs
-	if err := addMountUnit(s, b.preseed, meter); err != nil {
+	t := s.Type()
+	mountFlags := systemd.EnsureMountUnitFlags{
+		PreventRestartIfModified: false,
+		StartBeforeDriversLoad:   t == snap.TypeKernel,
+	}
+	if err := addMountUnit(s, mountFlags, b.preseed, meter); err != nil {
 		return snapType, nil, err
 	}
 
-	t := s.Type()
 	if !setupOpts.SkipKernelExtraction {
 		if err := boot.Kernel(s, t, dev).ExtractKernelAssets(snapf); err != nil {
 			return snapType, nil, fmt.Errorf("cannot install kernel: %s", err)
@@ -183,7 +187,7 @@ func (b Backend) RemoveKernelSnapSetup(instanceName string, rev snap.Revision, m
 func (b Backend) SetupComponent(compFilePath string, compPi snap.ContainerPlaceInfo, dev snap.Device, meter progress.Meter) (installRecord *InstallRecord, err error) {
 	// This assumes that the component was already verified or --dangerous was used.
 
-	_, snapf, oErr := OpenComponentFile(compFilePath)
+	compInfo, snapf, oErr := OpenComponentFile(compFilePath)
 	if oErr != nil {
 		return nil, oErr
 	}
@@ -221,7 +225,11 @@ func (b Backend) SetupComponent(compFilePath string, compPi snap.ContainerPlaceI
 	}
 
 	// generate the mount unit for the squashfs
-	if err := addMountUnit(compPi, b.preseed, meter); err != nil {
+	mountFlags := systemd.EnsureMountUnitFlags{
+		PreventRestartIfModified: false,
+		StartBeforeDriversLoad:   compInfo.Type == snap.KernelModulesComponent,
+	}
+	if err := addMountUnit(compPi, mountFlags, b.preseed, meter); err != nil {
 		return nil, err
 	}
 
