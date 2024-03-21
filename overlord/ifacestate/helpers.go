@@ -41,7 +41,6 @@ import (
 	"github.com/snapcore/snapd/overlord/snapstate"
 	"github.com/snapcore/snapd/overlord/state"
 	"github.com/snapcore/snapd/snap"
-	"github.com/snapcore/snapd/systemd"
 	"github.com/snapcore/snapd/timings"
 )
 
@@ -50,8 +49,7 @@ func init() {
 }
 
 var (
-	snapdAppArmorServiceIsDisabled = snapdAppArmorServiceIsDisabledImpl
-	profilesNeedRegeneration       = profilesNeedRegenerationImpl
+	profilesNeedRegeneration = profilesNeedRegenerationImpl
 
 	writeSystemKey = interfaces.WriteSystemKey
 )
@@ -151,14 +149,6 @@ func profilesNeedRegenerationImpl() bool {
 		return true
 	}
 	return mismatch
-}
-
-// snapdAppArmorServiceIsDisabledImpl returns true if the snapd.apparmor
-// service unit exists but is disabled
-func snapdAppArmorServiceIsDisabledImpl() bool {
-	sysd := systemd.New(systemd.SystemMode, nil)
-	isEnabled, err := sysd.IsEnabled("snapd.apparmor")
-	return err == nil && !isEnabled
 }
 
 // regenerateAllSecurityProfiles will regenerate all security profiles.

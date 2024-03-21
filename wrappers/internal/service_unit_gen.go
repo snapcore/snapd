@@ -288,7 +288,6 @@ WantedBy={{.ServicesTarget}}
 		wrapperData.PrerequisiteTarget = systemd.PrerequisiteTarget
 		wrapperData.MountUnit = filepath.Base(systemd.MountUnitPath(appInfo.Snap.MountDir()))
 		wrapperData.WorkingDir = appInfo.Snap.DataDir()
-		wrapperData.After = append(wrapperData.After, "snapd.apparmor.service")
 	case snap.UserDaemon:
 		wrapperData.ServicesTarget = systemd.UserServicesTarget
 		// FIXME: ideally use UserDataDir("%h"), but then the
