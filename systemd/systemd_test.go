@@ -1361,6 +1361,47 @@ WantedBy=multi-user.target
 	})
 }
 
+func (s *SystemdTestSuite) TestAddMountUnitStartBeforeDriversLoad(c *C) {
+	restore := squashfs.MockNeedsFuse(false)
+	defer restore()
+
+	mockSnapPath := filepath.Join(c.MkDir(), "/var/lib/snappy/snaps/foo_1.0.snap")
+	makeMockFile(c, mockSnapPath)
+
+	mountUnitName, err := New(SystemMode, nil).EnsureMountUnitFile("Mount unit for foo, revision x1", mockSnapPath, "/snap/snapname/x1", "squashfs", systemd.EnsureMountUnitFlags{StartBeforeDriversLoad: true})
+	c.Assert(err, IsNil)
+	defer os.Remove(mountUnitName)
+
+	c.Assert(filepath.Join(dirs.SnapServicesDir, mountUnitName), testutil.FileEquals, fmt.Sprintf(`
+[Unit]
+Description=Mount unit for foo, revision x1
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=sysinit.target
+Before=systemd-udevd.service systemd-modules-load.service
+Before=snapd.mounts.target
+Before=local-fs.target
+Before=umount.target
+Conflicts=umount.target
+
+[Mount]
+What=%s
+Where=/snap/snapname/x1
+Type=squashfs
+Options=nodev,ro,x-gdu.hide,x-gvfs-hide
+LazyUnmount=yes
+
+[Install]
+WantedBy=sysinit.target
+`[1:], mockSnapPath))
+
+	c.Assert(s.argses, DeepEquals, [][]string{
+		{"daemon-reload"},
+		{"--no-reload", "enable", "snap-snapname-x1.mount"},
+		{"restart", "snap-snapname-x1.mount"},
+	})
+}
+
 func (s *SystemdTestSuite) TestAddMountUnitTransient(c *C) {
 	rootDir := dirs.GlobalRootDir
 
@@ -1439,6 +1480,8 @@ DefaultDependencies=no
 After=systemd-remount-fs.service
 Before=sysinit.target
 Before=systemd-udevd.service systemd-modules-load.service
+Before=snapd.mounts.target
+Before=local-fs.target
 Before=umount.target
 Conflicts=umount.target
 
@@ -1447,6 +1490,7 @@ What=%s
 Where=/run/mnt/kernel-modules/5.15.0-91-generic/mykmod/
 Type=squashfs
 Options=nodev,ro,x-gdu.hide,x-gvfs-hide
+LazyUnmount=yes
 
 [Install]
 WantedBy=sysinit.target
@@ -1487,6 +1531,8 @@ DefaultDependencies=no
 After=systemd-remount-fs.service
 Before=sysinit.target
 Before=systemd-udevd.service systemd-modules-load.service
+Before=snapd.mounts.target
+Before=local-fs.target
 Before=umount.target
 Conflicts=umount.target
 
@@ -1495,6 +1541,7 @@ What=/run/mnt/kernel-modules/5.15.0-91-generic/mykmod/modules/5.15.0-91-generic
 Where=/usr/lib/modules/5.15.0-91-generic/updates/mykmod/
 Type=none
 Options=bind
+LazyUnmount=yes
 
 [Install]
 WantedBy=sysinit.target
@@ -2065,6 +2112,8 @@ DefaultDependencies=no
 After=systemd-remount-fs.service
 Before=sysinit.target
 Before=systemd-udevd.service systemd-modules-load.service
+Before=snapd.mounts.target
+Before=local-fs.target
 Before=umount.target
 Conflicts=umount.target
 
@@ -2073,6 +2122,7 @@ What=%s
 Where=/run/mnt/kernel-snaps/pc-kernel/1
 Type=squashfs
 Options=nodev,ro,x-gdu.hide,x-gvfs-hide
+LazyUnmount=yes
 
 [Install]
 WantedBy=sysinit.target

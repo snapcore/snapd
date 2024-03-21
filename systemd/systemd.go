@@ -355,6 +355,9 @@ type EnsureMountUnitFlags struct {
 	// PreventRestartIfModified is set if we do not want to restart the
 	// mount unit if even though it was modified
 	PreventRestartIfModified bool
+	// StartBeforeDriversLoad is set if the unit is needed before
+	// udevd starts to run rules
+	StartBeforeDriversLoad bool
 }
 
 // Systemd exposes a minimal interface to manage systemd via the systemctl command.
@@ -1416,7 +1419,7 @@ X-SnapdOrigin={{.}}
 {{- end}}
 `
 
-// We want kernel-modules components to be mounted before modules are
+// We want some snaps and components to be mounted before modules are
 // loaded (that is before systemd-{udevd,modules-load}).
 const beforeDriversLoadUnitTmpl = `[Unit]
 Description={{.Description}}
@@ -1424,6 +1427,8 @@ DefaultDependencies=no
 After=systemd-remount-fs.service
 Before=sysinit.target
 Before=systemd-udevd.service systemd-modules-load.service
+Before=snapd.mounts.target
+Before=local-fs.target
 Before=umount.target
 Conflicts=umount.target
 
@@ -1432,6 +1437,7 @@ What={{.What}}
 Where={{.Where}}
 Type={{.Fstype}}
 Options={{join .Options ","}}
+LazyUnmount=yes
 
 [Install]
 WantedBy=sysinit.target
@@ -1442,7 +1448,7 @@ X-SnapdOrigin={{.}}
 
 var templateFuncs = template.FuncMap{"join": strings.Join}
 var parsedRegularMountUnitTmpl = template.Must(template.New("unit").Funcs(templateFuncs).Parse(regularMountUnitTmpl))
-var parsedKernelDriversMountUnitTmpl = template.Must(template.New("unit").Funcs(templateFuncs).Parse(beforeDriversLoadUnitTmpl))
+var parsedBeforeDriversLoadMountUnitTmpl = template.Must(template.New("unit").Funcs(templateFuncs).Parse(beforeDriversLoadUnitTmpl))
 
 const (
 	snappyOriginModule = "X-SnapdOrigin"
@@ -1461,7 +1467,7 @@ func ensureMountUnitFile(u *MountUnitOptions) (mountUnitName string, modified mo
 	case RegularMountUnit:
 		mntUnitTmpl = parsedRegularMountUnitTmpl
 	case BeforeDriversLoadMountUnit:
-		mntUnitTmpl = parsedKernelDriversMountUnitTmpl
+		mntUnitTmpl = parsedBeforeDriversLoadMountUnitTmpl
 	default:
 		return "", mountUnchanged, fmt.Errorf("internal error: unknown mount unit type")
 	}
@@ -1526,7 +1532,7 @@ func (s *systemd) EnsureMountUnitFile(description, what, where, fstype string, f
 		options = append(options, "bind")
 		hostFsType = "none"
 	}
-	return s.EnsureMountUnitFileWithOptions(&MountUnitOptions{
+	mountOptions := &MountUnitOptions{
 		Lifetime:                 Persistent,
 		Description:              description,
 		What:                     what,
@@ -1534,7 +1540,11 @@ func (s *systemd) EnsureMountUnitFile(description, what, where, fstype string, f
 		Fstype:                   hostFsType,
 		Options:                  options,
 		PreventRestartIfModified: flags.PreventRestartIfModified,
-	})
+	}
+	if flags.StartBeforeDriversLoad {
+		mountOptions.MountUnitType = BeforeDriversLoadMountUnit
+	}
+	return s.EnsureMountUnitFileWithOptions(mountOptions)
 }
 
 func (s *systemd) EnsureMountUnitFileWithOptions(unitOptions *MountUnitOptions) (string, error) {
