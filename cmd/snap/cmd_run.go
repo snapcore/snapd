@@ -43,7 +43,6 @@ import (
 	"github.com/snapcore/snapd/client"
 	"github.com/snapcore/snapd/desktop/portal"
 	"github.com/snapcore/snapd/dirs"
-	"github.com/snapcore/snapd/features"
 	"github.com/snapcore/snapd/i18n"
 	"github.com/snapcore/snapd/interfaces"
 	"github.com/snapcore/snapd/logger"
@@ -258,16 +257,6 @@ func (x *cmdRun) Execute(args []string) error {
 	}
 
 	return x.snapRunApp(snapApp, args)
-}
-
-func maybeWaitWhileInhibited(ctx context.Context, snapName string) error {
-	// If the snap is inhibited from being used then postpone running it until
-	// that condition passes. Inhibition UI can be dismissed by the user, in
-	// which case we don't run the application at all.
-	if features.RefreshAppAwareness.IsEnabled() {
-		return waitWhileInhibited(ctx, snapName)
-	}
-	return nil
 }
 
 // antialias changes snapApp and args if snapApp is actually an alias
@@ -499,21 +488,15 @@ func (x *cmdRun) snapRunApp(snapApp string, args []string) error {
 		logger.Debugf("enabled debug logging of early snap startup")
 	}
 	snapName, appName := snap.SplitSnapApp(snapApp)
-	info, err := getSnapInfo(snapName, snap.R(0))
+
+	// TODO: use signal.NotifyContext as context when snap-run flow is finalized
+	info, app, hintFlock, err := maybeWaitWhileInhibited(context.Background(), snapName, appName)
 	if err != nil {
 		return err
 	}
-
-	app := info.Apps[appName]
-	if app == nil {
-		return fmt.Errorf(i18n.G("cannot find app %q in %q"), appName, snapName)
-	}
-
-	if !app.IsService() {
-		// TODO: use signal.NotifyContext as context when snap-run flow is finalized
-		if err := maybeWaitWhileInhibited(context.Background(), snapName); err != nil {
-			return err
-		}
+	// TODO: Unlock hintFlock after process is placed in transient scope
+	if hintFlock != nil {
+		hintFlock.Unlock()
 	}
 
 	return x.runSnapConfine(info, app.SecurityTag(), snapApp, "", args)

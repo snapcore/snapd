@@ -461,6 +461,16 @@ func MockTryNotifyRefreshViaSnapDesktopIntegrationFlow(f func(ctx context.Contex
 	}
 }
 
+func MockInhibitionFlow(flow inhibitionFlow) (restore func()) {
+	old := newInhibitionFlow
+	newInhibitionFlow = func(name string) inhibitionFlow {
+		return flow
+	}
+	return func() {
+		newInhibitionFlow = old
+	}
+}
+
 func MockAutostartSessionApps(f func(string) error) func() {
 	old := autostartSessionApps
 	autostartSessionApps = f
