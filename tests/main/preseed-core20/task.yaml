@@ -18,8 +18,7 @@ environment:
 prepare: |
   #shellcheck source=tests/lib/prepare.sh
   . "$TESTSLIB"/prepare.sh
-  snap download "--channel=${SNAPD_CHANNEL}" snapd
-  repack_snapd_snap_with_deb_content_and_run_mode_firstboot_tweaks /tmp
+  build_snapd_snap_with_run_mode_firstboot_tweaks /tmp
 
   snap pack systemusers-snap
 

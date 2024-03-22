@@ -1,5 +1,8 @@
 summary: Check that refreshing snapd to a fixed version removes vulnerable revs
 
+details: |
+  TODO
+
 # just focal is fine for this test - we only need to check that things happen on
 # classic
 systems: [ubuntu-20.04-*, ubuntu-22.04-64]
@@ -20,7 +23,7 @@ environment:
   # meh snap-state doesn't have a consistent naming for these snaps, so we can't
   # just do "$SNAPD_SOURCE_SNAP-from-deb.snap"
   REPACKED_SNAP_NAME/core: core-from-snapd-deb.snap
-  REPACKED_SNAP_NAME/snapd: snapd-from-deb.snap
+  REPACKED_SNAP_NAME/snapd: snapd.snap
 
   # a specific vulnerable snapd version we can base our image on
   VULN_SNAP_REV_URL/snapd: https://storage.googleapis.com/snapd-spread-tests/snaps/snapd_14549.snap
@@ -39,7 +42,17 @@ prepare: |
   mount_ubuntu_image "$(tests.nested get images-path)/$IMAGE_NAME" "$IMAGE_MOUNTPOINT"
 
   # repack the deb into the snap we want
-  "$TESTSTOOLS"/snaps-state repack_snapd_deb_into_snap "$SNAPD_SOURCE_SNAP"
+  case "$SNAPD_SOURCE_SNAP" in
+    core)
+      "$TESTSTOOLS"/snaps-state repack_snapd_deb_into_snap "$SNAPD_SOURCE_SNAP"
+    ;;
+    snapd)
+      # shellcheck source=tests/lib/prepare.sh
+      . "$TESTSLIB"/prepare.sh
+      build_snapd_snap .
+      mv snapd_*.snap snapd.snap
+    ;;
+  esac
 
   # add the known vulnerable version of snapd into the seed, dangerously
   curl -s -o "$SNAPD_SOURCE_SNAP-vuln.snap" "$VULN_SNAP_REV_URL"

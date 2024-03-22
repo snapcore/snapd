@@ -1,5 +1,8 @@
 summary: Check that the boot config is correctly updated when snapd is refreshed
 
+details: |
+  Check that the boot config is correctly updated when snapd is refreshed
+
 systems: [ubuntu-20.04-64, ubuntu-22.04-64]
 
 environment:
@@ -17,9 +20,11 @@ prepare: |
       exit
   fi
 
-  "$TESTSTOOLS"/snaps-state repack-snapd-deb-into-snap snapd
+  # shellcheck source=tests/lib/prepare.sh
+  . "$TESTSLIB"/prepare.sh
+  build_snapd_snap_with_run_mode_firstboot_tweaks .
   echo "Repack the snapd snap with a marker file"
-  unsquashfs -d snapd-snap snapd-from-deb.snap
+  unsquashfs -d snapd-snap snapd_*.snap
 
   echo "Leave a marker file that triggers boot config assets to be injected"
   echo 'bootassetstesting' > snapd-snap/usr/lib/snapd/bootassetstesting

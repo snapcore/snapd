@@ -1,5 +1,8 @@
 summary: Ensure the snapd works without core on classic systems
 
+details: |
+    TODO
+
 # Run only on ubuntu classic because this re-execs.  We have a
 # separate test for UC18 already and on UC16 we always have a core
 # snap so we don't need to test there.
@@ -21,8 +24,7 @@ execute: |
     echo "Create modified snapd snap"
     #shellcheck source=tests/lib/prepare.sh
     . "$TESTSLIB"/prepare.sh
-    snap download --edge snapd
-    repack_snapd_snap_with_deb_content /tmp
+    build_snapd_snap /tmp
 
     echo "Ensure core is gone so that we can have snapd"
     #shellcheck source=tests/lib/pkgdb.sh
