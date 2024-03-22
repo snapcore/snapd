@@ -77,8 +77,8 @@ execute: |
   remote.exec "[ -f /boot/efi/EFI/ubuntu/shimx64.efi ]"
   remote.exec "[ -f /boot/efi/EFI/ubuntu/bootx64.csv ]"
 
+  # check old assets have been removed
   remote.exec "! [ -f /boot/efi/EFI/boot/grubx64.efi ]"
-  remote.exec "sudo rm -f /boot/efi/EFI/boot/grubx64.efi"
 
   # Make sure we can still boot
   boot_id=$(tests.nested boot-id)
@@ -94,4 +94,5 @@ execute: |
   remote.wait-for reboot "$boot_id"
   remote.exec sudo snap watch "${install_change}"
   remote.exec "[ -f /boot/efi/EFI/boot/grubx64.efi ]"
+  # check assets from previous gadget have been removed
   remote.exec "! [ -f /boot/efi/EFI/ubuntu/grubx64.efi ]"
