@@ -3325,12 +3325,18 @@ func (s *mountedfilesystemTestSuite) TestMountedUpdaterRemoveFiles(c *C) {
 		{name: "bar", target: "foo", content: "data"},
 		{name: "bar", target: "some-dir/foo", content: "data"},
 	}
-	oldData := append(newData, gadgetData{name: "bar", target: "some-dir/to-be-removed", content: "data"})
+	oldData := append(newData, []gadgetData{
+		{name: "bar", target: "some-dir/to-be-removed", content: "data"},
+		// We do not support removal of directories
+		{name: "source-dir", target: "some-other-dir/foo", content: "data"},
+		{name: "source-dir", target: "manually-removed", content: "data"},
+	}...)
 
 	makeGadgetData(c, s.dir, newData)
 
 	outDir := filepath.Join(c.MkDir(), "out-dir")
 	makeExistingData(c, outDir, oldData)
+	c.Assert(os.Remove(filepath.Join(outDir, "manually-removed")), IsNil)
 
 	psBefore := &gadget.LaidOutStructure{
 		VolumeStructure: &gadget.VolumeStructure{
@@ -3346,6 +3352,9 @@ func (s *mountedfilesystemTestSuite) TestMountedUpdaterRemoveFiles(c *C) {
 				}, {
 					UnresolvedSource: "bar",
 					Target:           "/some-dir/to-be-removed",
+				}, {
+					UnresolvedSource: "source-dir",
+					Target:           "/some-other-dir",
 				},
 			},
 			Update: gadget.VolumeUpdate{
@@ -3391,13 +3400,21 @@ func (s *mountedfilesystemTestSuite) TestMountedUpdaterRemoveFiles(c *C) {
 
 	c.Assert(osutil.FileExists(filepath.Join(outDir, "some-dir/to-be-removed")), Equals, true)
 
+	c.Assert(osutil.FileExists(filepath.Join(outDir, "some-other-dir/foo")), Equals, true)
+
 	err = rw.Update()
 	c.Assert(err, IsNil)
 
 	c.Assert(osutil.FileExists(filepath.Join(outDir, "some-dir/to-be-removed")), Equals, false)
 
+	// We do not support removal of directories
+	c.Assert(osutil.FileExists(filepath.Join(outDir, "some-other-dir/foo")), Equals, true)
+
 	err = rw.Rollback()
 	c.Assert(err, IsNil)
 
 	c.Assert(osutil.FileExists(filepath.Join(outDir, "some-dir/to-be-removed")), Equals, true)
+
+	// It has always been there, but we can still check
+	c.Assert(osutil.FileExists(filepath.Join(outDir, "some-other-dir/foo")), Equals, true)
 }
