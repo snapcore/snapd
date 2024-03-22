@@ -386,6 +386,9 @@ func (f *mountedFilesystemUpdater) Update() error {
 				continue
 			}
 			destPath, _ := f.entryDestPaths(f.mountPoint, "", c.Target, "")
+			// We skip directory because we do not know
+			// exactly the content that is supposed to be
+			// in there.
 			if osutil.IsDirectory(destPath) {
 				continue
 			}
