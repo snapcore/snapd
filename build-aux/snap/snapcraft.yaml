@@ -36,6 +36,7 @@ parts:
     build-packages:
       - gawk
       - bison
+      - quilt
     source: https://git.launchpad.net/ubuntu/+source/glibc
     source-branch: ubuntu/jammy-updates
     source-type: git
@@ -55,6 +56,7 @@ parts:
           - to ppc64el:
               - DYNAMIC_LINKER: ld64.so.2
     override-build: |
+      QUILT_PATCHES=debian/patches quilt push -a
       rm -rf build
       mkdir -p build
       cd build
