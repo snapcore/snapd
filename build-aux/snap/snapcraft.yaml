@@ -114,6 +114,11 @@ parts:
       cp -rT "${CRAFT_PART_INSTALL}/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}" "${CRAFT_PART_INSTALL}/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}"
       rm -rf "${CRAFT_PART_INSTALL}/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}"
       find "${CRAFT_PART_INSTALL}/usr/share/doc" \( -not -type d -not -name "copyright" -delete \) -o \( -type d -empty -delete \)
+    <<:
+      - *dynamic-linker
+    override-prime: |
+      craftctl default
+      python3 "${CRAFT_PROJECT_DIR}/build-aux/snap/local/patch-dl.py" "/snap/snapd/current/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/${DYNAMIC_LINKER}"
 
   apparmor:
     plugin: autotools
@@ -169,6 +174,11 @@ parts:
       # We are statically linked
       - -usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/**
       - -usr/include
+    <<:
+      - *dynamic-linker
+    override-prime: |
+      craftctl default
+      python3 "${CRAFT_PROJECT_DIR}/build-aux/snap/local/patch-dl.py" "/snap/snapd/current/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/${DYNAMIC_LINKER}"
 
   snapd:
     plugin: nil
@@ -289,8 +299,13 @@ parts:
       fi
 
       find "${CRAFT_PART_INSTALL}/usr/lib/snapd" "${CRAFT_PART_INSTALL}/usr/bin" -type f -exec strip {} ";"
+    <<:
+      - *dynamic-linker
+    override-prime: |
+      craftctl default
+      python3 "${CRAFT_PROJECT_DIR}/build-aux/snap/local/patch-dl.py" "/snap/snapd/current/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/${DYNAMIC_LINKER}"
 
-  fix-linker:
+  check-linker:
     plugin: nil
     build-packages:
       - patchelf
@@ -304,5 +319,4 @@ parts:
     <<:
       - *dynamic-linker
     override-prime: |
-      find "${CRAFT_PRIME}" -type f -exec python3 "${CRAFT_PROJECT_DIR}/build-aux/snap/local/is-shared-exec.py" {} ";" -print -exec patchelf --set-interpreter "/snap/snapd/current/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/${DYNAMIC_LINKER}" {} ";"
-      chmod u+s "${CRAFT_PRIME}"/usr/lib/snapd/snap-confine
+      python3 "${CRAFT_PROJECT_DIR}/build-aux/snap/local/verify-dl.py" "${CRAFT_PRIME}" "/snap/snapd/current/usr/lib/${CRAFT_ARCH_TRIPLET_BUILD_FOR}/${DYNAMIC_LINKER}" ";"
