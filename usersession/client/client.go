@@ -25,7 +25,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -53,7 +52,7 @@ func dialSessionAgent(network, address string) (net.Conn, error) {
 
 type Client struct {
 	doer *http.Client
-	uids []int
+	uids map[int]bool
 }
 
 func New() *Client {
@@ -67,7 +66,10 @@ func New() *Client {
 // only.
 func NewForUids(uids ...int) *Client {
 	cli := New()
-	cli.uids = append(cli.uids, uids...)
+	cli.uids = make(map[int]bool)
+	for _, uid := range uids {
+		cli.uids[uid] = true
+	}
 	return cli
 }
 
@@ -104,20 +106,12 @@ func (resp *response) checkError() {
 	}
 }
 
-func (client *Client) sendRequest(ctx context.Context, socket string, method, urlpath string, query url.Values, headers map[string]string, body []byte) *response {
-	uidStr := filepath.Base(filepath.Dir(socket))
-	uid, err := strconv.Atoi(uidStr)
-	if err != nil {
-		// Ignore directories that do not
-		// appear to be valid XDG runtime dirs
-		// (i.e. /run/user/NNNN).
-		return nil
-	}
+func (client *Client) sendRequest(ctx context.Context, uid int, method, urlpath string, query url.Values, headers map[string]string, body []byte) *response {
 	response := &response{uid: uid}
 
 	u := url.URL{
 		Scheme:   "http",
-		Host:     uidStr,
+		Host:     fmt.Sprintf("%d", uid),
 		Path:     urlpath,
 		RawQuery: query.Encode(),
 	}
@@ -142,13 +136,37 @@ func (client *Client) sendRequest(ctx context.Context, socket string, method, ur
 	return response
 }
 
+func (client *Client) sessionTargets() ([]int, error) {
+	sockets, err := filepath.Glob(filepath.Join(dirs.XdgRuntimeDirGlob, "snapd-session-agent.socket"))
+	if err != nil {
+		return nil, err
+	}
+
+	var uids []int
+	for _, sock := range sockets {
+		uidStr := filepath.Base(filepath.Dir(sock))
+		uid, err := strconv.Atoi(uidStr)
+		if err != nil {
+			// Ignore directories that do not
+			// appear to be valid XDG runtime dirs
+			// (i.e. /run/user/NNNN).
+			continue
+		}
+		if len(client.uids) > 0 && !client.uids[uid] {
+			continue
+		}
+		uids = append(uids, uid)
+	}
+	return uids, nil
+}
+
 // doMany sends the given request to all active user sessions or a subset of them
 // defined by optional client.uids field. Please be careful when using this
 // method, because it is not aware of the physical user who triggered the request
 // and blindly forwards it to all logged in users. Some of them might not have
 // the right to see the request (let alone to respond to it).
 func (client *Client) doMany(ctx context.Context, method, urlpath string, query url.Values, headers map[string]string, body []byte) ([]*response, error) {
-	sockets, err := filepath.Glob(filepath.Join(dirs.XdgRuntimeDirGlob, "snapd-session-agent.socket"))
+	uids, err := client.sessionTargets()
 	if err != nil {
 		return nil, err
 	}
@@ -158,35 +176,17 @@ func (client *Client) doMany(ctx context.Context, method, urlpath string, query 
 		responses []*response
 	)
 
-	var uids map[string]bool
-	if len(client.uids) > 0 {
-		uids = make(map[string]bool)
-		for _, uid := range client.uids {
-			uids[fmt.Sprintf("%d", uid)] = true
-		}
-	}
-
-	for _, socket := range sockets {
-		// filter out sockets based on uids
-		if len(uids) > 0 {
-			// XXX: alternatively we could Stat() the socket and
-			// and check Uid field of stat.Sys().(*syscall.Stat_t), but it's
-			// more annyoing to unit-test.
-			userPart := filepath.Base(filepath.Dir(socket))
-			if !uids[userPart] {
-				continue
-			}
-		}
+	for _, uid := range uids {
 		wg.Add(1)
-		go func(socket string) {
+		go func(uid int) {
 			defer wg.Done()
-			response := client.sendRequest(ctx, socket, method, urlpath, query, headers, body)
+			response := client.sendRequest(ctx, uid, method, urlpath, query, headers, body)
 			if response != nil {
 				mu.Lock()
 				defer mu.Unlock()
 				responses = append(responses, response)
 			}
-		}(socket)
+		}(uid)
 	}
 	wg.Wait()
 	return responses, nil
@@ -196,7 +196,7 @@ func decodeInto(reader io.Reader, v interface{}) error {
 	dec := json.NewDecoder(reader)
 	if err := dec.Decode(v); err != nil {
 		r := dec.Buffered()
-		buf, err1 := ioutil.ReadAll(r)
+		buf, err1 := io.ReadAll(r)
 		if err1 != nil {
 			buf = []byte(fmt.Sprintf("error reading buffered response body: %s", err1))
 		}
@@ -265,19 +265,21 @@ func decodeServiceErrors(uid int, errorValue map[string]interface{}, kind string
 	return failures, err
 }
 
-func (client *Client) serviceControlCall(ctx context.Context, action string, services []string) (startFailures, stopFailures []ServiceFailure, err error) {
-	headers := map[string]string{"Content-Type": "application/json"}
-	reqBody, err := json.Marshal(map[string]interface{}{
-		"action":   action,
-		"services": services,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	responses, err := client.doMany(ctx, "POST", "/v1/service-control", nil, headers, reqBody)
-	if err != nil {
-		return nil, nil, err
-	}
+type ServiceInstruction struct {
+	Action   string   `json:"action"`
+	Services []string `json:"services,omitempty"`
+
+	// StartServices options
+	Enable bool `json:"enable,omitempty"`
+
+	// StopServices options
+	Disable bool `json:"disable,omitempty"`
+
+	// RestartServices options
+	Reload bool `json:"reload,omitempty"`
+}
+
+func (client *Client) decodeControlResponses(responses []*response) (startFailures, stopFailures []ServiceFailure, err error) {
 	for _, resp := range responses {
 		if agentErr, ok := resp.err.(*Error); ok && agentErr.Kind == "service-control" {
 			if errorValue, ok := agentErr.Value.(map[string]interface{}); ok {
@@ -298,27 +300,103 @@ func (client *Client) serviceControlCall(ctx context.Context, action string, ser
 	return startFailures, stopFailures, err
 }
 
+func (client *Client) serviceControlCall(ctx context.Context, inst *ServiceInstruction) (startFailures, stopFailures []ServiceFailure, err error) {
+	headers := map[string]string{"Content-Type": "application/json"}
+	reqBody, err := json.Marshal(inst)
+	if err != nil {
+		return nil, nil, err
+	}
+	responses, err := client.doMany(ctx, "POST", "/v1/service-control", nil, headers, reqBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client.decodeControlResponses(responses)
+}
+
 func (client *Client) ServicesDaemonReload(ctx context.Context) error {
-	_, _, err := client.serviceControlCall(ctx, "daemon-reload", nil)
+	_, _, err := client.serviceControlCall(ctx, &ServiceInstruction{
+		Action: "daemon-reload",
+	})
 	return err
 }
 
-func (client *Client) ServicesStart(ctx context.Context, services []string) (startFailures, stopFailures []ServiceFailure, err error) {
-	return client.serviceControlCall(ctx, "start", services)
+func filterDisabledServices(all, disabled []string) []string {
+	var filtered []string
+ServiceLoop:
+	for _, svc := range all {
+		for _, disabledSvc := range disabled {
+			if strings.Contains(svc, disabledSvc) {
+				continue ServiceLoop
+			}
+		}
+		filtered = append(filtered, svc)
+	}
+	return filtered
 }
 
-func (client *Client) ServicesStop(ctx context.Context, services []string) (stopFailures []ServiceFailure, err error) {
-	_, stopFailures, err = client.serviceControlCall(ctx, "stop", services)
+func (client *Client) ServicesStart(ctx context.Context, services []string, disabledSvcs map[int][]string, enable bool) (startFailures, stopFailures []ServiceFailure, err error) {
+	// If no disabled services lists are provided, then we do not need to filter out services
+	// per-user. In this case lets
+	if len(disabledSvcs) == 0 {
+		return client.serviceControlCall(ctx, &ServiceInstruction{
+			Action:   "start",
+			Services: services,
+			Enable:   enable,
+		})
+	}
+
+	// Otherwise we do a bit of manual request building based on the uids we need to filter
+	// services out for.
+	uids, err := client.sessionTargets()
+	if err != nil {
+		return nil, nil, err
+	}
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		responses []*response
+	)
+
+	for _, uid := range uids {
+		headers := map[string]string{"Content-Type": "application/json"}
+		reqBody, err := json.Marshal(&ServiceInstruction{
+			Action:   "start",
+			Services: filterDisabledServices(services, disabledSvcs[uid]),
+			Enable:   enable,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		wg.Add(1)
+		go func(uid int) {
+			defer wg.Done()
+			response := client.sendRequest(ctx, uid, "POST", "/v1/service-control", nil, headers, reqBody)
+			if response != nil {
+				mu.Lock()
+				defer mu.Unlock()
+				responses = append(responses, response)
+			}
+		}(uid)
+	}
+	wg.Wait()
+	return client.decodeControlResponses(responses)
+}
+
+func (client *Client) ServicesStop(ctx context.Context, services []string, disable bool) (stopFailures []ServiceFailure, err error) {
+	_, stopFailures, err = client.serviceControlCall(ctx, &ServiceInstruction{
+		Action:   "stop",
+		Services: services,
+		Disable:  disable,
+	})
 	return stopFailures, err
 }
 
-func (client *Client) ServicesRestart(ctx context.Context, services []string) (restartFailures []ServiceFailure, err error) {
-	restartFailures, _, err = client.serviceControlCall(ctx, "restart", services)
-	return restartFailures, err
-}
-
-func (client *Client) ServicesReloadOrRestart(ctx context.Context, services []string) (restartFailures []ServiceFailure, err error) {
-	restartFailures, _, err = client.serviceControlCall(ctx, "reload-or-restart", services)
+func (client *Client) ServicesRestart(ctx context.Context, services []string, reload bool) (restartFailures []ServiceFailure, err error) {
+	restartFailures, _, err = client.serviceControlCall(ctx, &ServiceInstruction{
+		Action:   "restart",
+		Services: services,
+		Reload:   reload,
+	})
 	return restartFailures, err
 }
 

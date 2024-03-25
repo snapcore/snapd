@@ -21,6 +21,7 @@ package client_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -234,10 +235,46 @@ func (s *clientSuite) TestServicesStart(c *C) {
   "result": null
 }`))
 	})
-	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"})
+	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"}, nil, false)
 	c.Assert(err, IsNil)
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
+}
+
+func (s *clientSuite) TestServicesStartWithDisabledServices(c *C) {
+	var n int32
+	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&n, 1)
+		decoder := json.NewDecoder(r.Body)
+		var inst client.ServiceInstruction
+		c.Assert(decoder.Decode(&inst), IsNil)
+		if r.Host == "42" {
+			c.Check(inst.Services, DeepEquals, []string{"service2.service"})
+		} else if r.Host == "1000" {
+			c.Check(inst.Services, DeepEquals, []string{"service1.service"})
+		} else {
+			c.FailNow()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{
+  "type": "sync",
+  "result": null
+}`))
+	})
+	startFailures, stopFailures, err := s.cli.ServicesStart(
+		context.Background(),
+		[]string{"service1.service", "service2.service"},
+		map[int][]string{
+			42:   {"service1.service"},
+			1000: {"service2.service"},
+		},
+		false,
+	)
+	c.Assert(err, IsNil)
+	c.Check(startFailures, HasLen, 0)
+	c.Check(stopFailures, HasLen, 0)
+	c.Check(atomic.LoadInt32(&n), Equals, int32(2))
 }
 
 func (s *clientSuite) TestServicesStartFailure(c *C) {
@@ -257,7 +294,7 @@ func (s *clientSuite) TestServicesStartFailure(c *C) {
   }
 }`))
 	})
-	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"})
+	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"}, nil, false)
 	c.Assert(err, ErrorMatches, "failed to start services")
 	c.Check(startFailures, HasLen, 2)
 	c.Check(stopFailures, HasLen, 0)
@@ -304,7 +341,7 @@ func (s *clientSuite) TestServicesStartOneAgentFailure(c *C) {
   }
 }`))
 	})
-	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"})
+	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"}, nil, false)
 	c.Assert(err, ErrorMatches, "failed to start services")
 	c.Check(startFailures, DeepEquals, []client.ServiceFailure{
 		{
@@ -341,14 +378,14 @@ func (s *clientSuite) TestServicesStartBadErrors(c *C) {
 
 	// Error value is not a map
 	errorValue = "[]"
-	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service"})
+	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
 
 	// Error value is a map, but missing start-errors/stop-errors keys
 	errorValue = "{}"
-	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"})
+	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
@@ -358,7 +395,7 @@ func (s *clientSuite) TestServicesStartBadErrors(c *C) {
   "start-errors": [],
   "stop-errors": 42
 }`
-	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"})
+	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
@@ -372,7 +409,7 @@ func (s *clientSuite) TestServicesStartBadErrors(c *C) {
     "service1.service": {}
   }
 }`
-	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"})
+	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
@@ -386,7 +423,7 @@ func (s *clientSuite) TestServicesStartBadErrors(c *C) {
     "service2.service": 42
   }
 }`
-	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"})
+	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, DeepEquals, []client.ServiceFailure{
 		{
@@ -407,7 +444,7 @@ func (s *clientSuite) TestServicesStop(c *C) {
   "result": null
 }`))
 	})
-	failures, err := s.cli.ServicesStop(context.Background(), []string{"service1.service", "service2.service"})
+	failures, err := s.cli.ServicesStop(context.Background(), []string{"service1.service", "service2.service"}, false)
 	c.Assert(err, IsNil)
 	c.Check(failures, HasLen, 0)
 }
@@ -429,7 +466,7 @@ func (s *clientSuite) TestServicesStopFailure(c *C) {
   }
 }`))
 	})
-	failures, err := s.cli.ServicesStop(context.Background(), []string{"service1.service", "service2.service"})
+	failures, err := s.cli.ServicesStop(context.Background(), []string{"service1.service", "service2.service"}, false)
 	c.Assert(err, ErrorMatches, "failed to stop services")
 	c.Check(failures, HasLen, 2)
 	failure0 := failures[0]
@@ -458,7 +495,7 @@ func (s *clientSuite) TestServicesRestart(c *C) {
   "result": null
 }`))
 	})
-	failures, err := s.cli.ServicesRestart(context.Background(), []string{"service1.service", "service2.service"})
+	failures, err := s.cli.ServicesRestart(context.Background(), []string{"service1.service", "service2.service"}, false)
 	c.Assert(err, IsNil)
 	c.Check(failures, HasLen, 0)
 }
@@ -480,7 +517,7 @@ func (s *clientSuite) TestServicesRestartFailure(c *C) {
   }
 }`))
 	})
-	failures, err := s.cli.ServicesRestart(context.Background(), []string{"service1.service", "service2.service"})
+	failures, err := s.cli.ServicesRestart(context.Background(), []string{"service1.service", "service2.service"}, false)
 	c.Assert(err, ErrorMatches, "failed to restart services")
 	c.Check(failures, HasLen, 2)
 	failure0 := failures[0]
@@ -500,7 +537,7 @@ func (s *clientSuite) TestServicesRestartFailure(c *C) {
 	})
 }
 
-func (s *clientSuite) TestServicesRestartOrReload(c *C) {
+func (s *clientSuite) TestServicesRestartWithReload(c *C) {
 	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
@@ -509,12 +546,12 @@ func (s *clientSuite) TestServicesRestartOrReload(c *C) {
   "result": null
 }`))
 	})
-	failures, err := s.cli.ServicesReloadOrRestart(context.Background(), []string{"service1.service", "service2.service"})
+	failures, err := s.cli.ServicesRestart(context.Background(), []string{"service1.service", "service2.service"}, true)
 	c.Assert(err, IsNil)
 	c.Check(failures, HasLen, 0)
 }
 
-func (s *clientSuite) TestServicesRestartOrReloadFailure(c *C) {
+func (s *clientSuite) TestServicesRestartWithReloadFailure(c *C) {
 	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(500)
@@ -531,7 +568,7 @@ func (s *clientSuite) TestServicesRestartOrReloadFailure(c *C) {
   }
 }`))
 	})
-	failures, err := s.cli.ServicesReloadOrRestart(context.Background(), []string{"service1.service", "service2.service"})
+	failures, err := s.cli.ServicesRestart(context.Background(), []string{"service1.service", "service2.service"}, true)
 	c.Assert(err, ErrorMatches, "failed to restart or reload services")
 	c.Check(failures, HasLen, 2)
 	failure0 := failures[0]
