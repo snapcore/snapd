@@ -38,18 +38,29 @@ import (
 
 var runinhibitWaitWhileInhibited = runinhibit.WaitWhileInhibited
 
+// maybeWaitWhileInhibited is a wrapper for waitWhileInhibited that skips waiting
+// if refresh-app-awareness flag is disabled.
 func maybeWaitWhileInhibited(ctx context.Context, snapName string, appName string) (info *snap.Info, app *snap.AppInfo, hintFlock *osutil.FileLock, err error) {
+	// wait only if refresh-app-awareness flag is enabled
 	if features.RefreshAppAwareness.IsEnabled() {
 		return waitWhileInhibited(ctx, snapName, appName)
-	} else {
-		info, app, err = getInfoAndApp(snapName, appName, snap.R(0))
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		return info, app, nil, nil
 	}
+
+	info, app, err = getInfoAndApp(snapName, appName, snap.R(0))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return info, app, nil, nil
 }
 
+// waitWhileInhibited blocks until snap is not inhibited for refresh anymore and then
+// returns a locked hint file lock along with the latest snap and app information.
+// If the snap is inhibited for refresh, a notification flow is initiated during
+// the inhibition period.
+//
+// NOTE: A snap without a hint file is considered not inhibited and a nil FileLock is returned.
+//
+// NOTE: It is the caller's responsibility to release the returned file lock.
 func waitWhileInhibited(ctx context.Context, snapName string, appName string) (info *snap.Info, app *snap.AppInfo, hintFlock *osutil.FileLock, err error) {
 	flow := newInhibitionFlow(snapName)
 	notified := false
@@ -108,8 +119,8 @@ func getInfoAndApp(snapName, appName string, rev snap.Revision) (*snap.Info, *sn
 		return nil, nil, err
 	}
 
-	app := info.Apps[appName]
-	if app == nil {
+	app, exists := info.Apps[appName]
+	if !exists {
 		return nil, nil, fmt.Errorf(i18n.G("cannot find app %q in %q"), appName, snapName)
 	}
 
