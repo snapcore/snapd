@@ -359,9 +359,14 @@ func (client *Client) ServicesStart(ctx context.Context, services []string, disa
 
 	for _, uid := range uids {
 		headers := map[string]string{"Content-Type": "application/json"}
+		filtered := filterDisabledServices(services, disabledSvcs[uid])
+		if len(filtered) == 0 {
+			// Save an expensive call
+			continue
+		}
 		reqBody, err := json.Marshal(&ServiceInstruction{
 			Action:   "start",
-			Services: filterDisabledServices(services, disabledSvcs[uid]),
+			Services: filtered,
 			Enable:   enable,
 		})
 		if err != nil {
