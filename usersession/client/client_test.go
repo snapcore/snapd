@@ -235,7 +235,7 @@ func (s *clientSuite) TestServicesStart(c *C) {
   "result": null
 }`))
 	})
-	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"}, nil, false)
+	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"}, client.ClientServicesStartOptions{})
 	c.Assert(err, IsNil)
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
@@ -265,11 +265,12 @@ func (s *clientSuite) TestServicesStartWithDisabledServices(c *C) {
 	startFailures, stopFailures, err := s.cli.ServicesStart(
 		context.Background(),
 		[]string{"service1.service", "service2.service"},
-		map[int][]string{
-			42:   {"service1.service"},
-			1000: {"service2.service"},
+		client.ClientServicesStartOptions{
+			DisabledServices: map[int][]string{
+				42:   {"service1.service"},
+				1000: {"service2.service"},
+			},
 		},
-		false,
 	)
 	c.Assert(err, IsNil)
 	c.Check(startFailures, HasLen, 0)
@@ -294,7 +295,7 @@ func (s *clientSuite) TestServicesStartFailure(c *C) {
   }
 }`))
 	})
-	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"}, nil, false)
+	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"}, client.ClientServicesStartOptions{})
 	c.Assert(err, ErrorMatches, "failed to start services")
 	c.Check(startFailures, HasLen, 2)
 	c.Check(stopFailures, HasLen, 0)
@@ -341,7 +342,7 @@ func (s *clientSuite) TestServicesStartOneAgentFailure(c *C) {
   }
 }`))
 	})
-	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"}, nil, false)
+	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service", "service2.service"}, client.ClientServicesStartOptions{})
 	c.Assert(err, ErrorMatches, "failed to start services")
 	c.Check(startFailures, DeepEquals, []client.ServiceFailure{
 		{
@@ -378,14 +379,14 @@ func (s *clientSuite) TestServicesStartBadErrors(c *C) {
 
 	// Error value is not a map
 	errorValue = "[]"
-	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
+	startFailures, stopFailures, err := s.cli.ServicesStart(context.Background(), []string{"service1.service"}, client.ClientServicesStartOptions{})
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
 
 	// Error value is a map, but missing start-errors/stop-errors keys
 	errorValue = "{}"
-	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
+	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, client.ClientServicesStartOptions{})
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
@@ -395,7 +396,7 @@ func (s *clientSuite) TestServicesStartBadErrors(c *C) {
   "start-errors": [],
   "stop-errors": 42
 }`
-	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
+	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, client.ClientServicesStartOptions{})
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
@@ -409,7 +410,7 @@ func (s *clientSuite) TestServicesStartBadErrors(c *C) {
     "service1.service": {}
   }
 }`
-	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
+	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, client.ClientServicesStartOptions{})
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, HasLen, 0)
 	c.Check(stopFailures, HasLen, 0)
@@ -423,7 +424,7 @@ func (s *clientSuite) TestServicesStartBadErrors(c *C) {
     "service2.service": 42
   }
 }`
-	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, nil, false)
+	startFailures, stopFailures, err = s.cli.ServicesStart(context.Background(), []string{"service1.service"}, client.ClientServicesStartOptions{})
 	c.Check(err, ErrorMatches, "failed to stop services")
 	c.Check(startFailures, DeepEquals, []client.ServiceFailure{
 		{
