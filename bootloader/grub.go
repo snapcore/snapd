@@ -690,3 +690,53 @@ func (g *grub) BootChains(runBl Bootloader, kernelPath string) ([][]BootFile, er
 
 	return chains, nil
 }
+
+// ConstructShimEfiLoadOption returns a serialized load option for the shim
+// binary. It should be called on a UefiBootloader.
+func (g *grub) EfiLoadOptionParameters(updatedAssets []string) (description string, assetPath string, optionalData []byte, err error) {
+	for _, a := range updatedAssets {
+		fmt.Printf("updated asset: %s\n", a)
+	}
+	if !g.recovery {
+		return "", "", nil, fmt.Errorf("internal error: run grub does not provide a boot entry")
+	}
+
+	knownAssets, err := g.getGrubBootAssetsForArch()
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	foundFallbackShim := false
+	//foundFallbackBinary := false
+	foundShim := false
+
+	// Let's look for the shim binary
+	for _, updated := range updatedAssets {
+		if updated == knownAssets.shimBinary.Id() {
+			foundShim = true
+		}
+		if updated == knownAssets.defaultShimBinary.Id() {
+			foundFallbackShim = true
+		}
+		/*if updated == knownAssets.fallbackBinary.Id() {
+			foundFallbackBinary = true
+		}*/
+	}
+
+	description = "ubuntu"
+	optionalData = nil
+
+	if foundShim {
+		/*if foundFallbackShim && !foundFallbackBinary {
+			return "", "", nil, fmt.Errorf("default shim is provided but without fallback binary, while other boot entries are provided")
+		}*/
+		assetPath = filepath.Join(g.rootdir, knownAssets.shimBinary.path)
+	} else if foundFallbackShim {
+		/*if foundFallbackBinary {
+			return "", "", nil, fmt.Errorf("default shim is provided with fallback binary, but no boot entry was found")
+		}*/
+		assetPath = filepath.Join(g.rootdir, knownAssets.defaultShimBinary.path)
+	}
+
+	return description, assetPath, optionalData, nil
+}
