@@ -145,8 +145,7 @@ func (c *userServiceClient) startServices(services ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout.DefaultTimeout))
 	defer cancel()
 
-	const enable = false
-	startFailures, stopFailures, err := c.cli.ServicesStart(ctx, services, nil, enable)
+	startFailures, stopFailures, err := c.cli.ServicesStart(ctx, services, client.ClientServicesStartOptions{})
 	for _, f := range startFailures {
 		c.inter.Notify(fmt.Sprintf("Could not start service %q for uid %d: %s", f.Service, f.Uid, f.Error))
 	}

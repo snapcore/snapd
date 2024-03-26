@@ -66,7 +66,7 @@ func New() *Client {
 // only.
 func NewForUids(uids ...int) *Client {
 	cli := New()
-	cli.uids = make(map[int]bool)
+	cli.uids = make(map[int]bool, len(uids))
 	for _, uid := range uids {
 		cli.uids[uid] = true
 	}
@@ -136,13 +136,22 @@ func (client *Client) sendRequest(ctx context.Context, uid int, method, urlpath 
 	return response
 }
 
+func (client *Client) uidIsValidAsTarget(uid int) bool {
+	// if uids are provided (i.e there must be entries, otherwise
+	// no list is there), then there must be an entry
+	if len(client.uids) > 0 {
+		return client.uids[uid]
+	}
+	return true
+}
+
 func (client *Client) sessionTargets() ([]int, error) {
 	sockets, err := filepath.Glob(filepath.Join(dirs.XdgRuntimeDirGlob, "snapd-session-agent.socket"))
 	if err != nil {
 		return nil, err
 	}
 
-	var uids []int
+	uids := make([]int, 0, len(client.uids))
 	for _, sock := range sockets {
 		uidStr := filepath.Base(filepath.Dir(sock))
 		uid, err := strconv.Atoi(uidStr)
@@ -152,10 +161,9 @@ func (client *Client) sessionTargets() ([]int, error) {
 			// (i.e. /run/user/NNNN).
 			continue
 		}
-		if len(client.uids) > 0 && !client.uids[uid] {
-			continue
+		if client.uidIsValidAsTarget(uid) {
+			uids = append(uids, uid)
 		}
-		uids = append(uids, uid)
 	}
 	return uids, nil
 }
@@ -265,6 +273,10 @@ func decodeServiceErrors(uid int, errorValue map[string]interface{}, kind string
 	return failures, err
 }
 
+// ServiceInstruction is the json representation of possible arguments
+// for the user session rest api to control services. Arguments allowed for
+// start/stop/restart are all listed here, and closely reflect possible arguments
+// for similar options in the wrappers package.
 type ServiceInstruction struct {
 	Action   string   `json:"action"`
 	Services []string `json:"services,omitempty"`
@@ -334,14 +346,29 @@ ServiceLoop:
 	return filtered
 }
 
-func (client *Client) ServicesStart(ctx context.Context, services []string, disabledSvcs map[int][]string, enable bool) (startFailures, stopFailures []ServiceFailure, err error) {
+type ClientServicesStartOptions struct {
+	// Enable determines whether the service should be enabled before
+	// its being started.
+	Enable bool
+	// DisabledServices is a list of services per-uid that can be provided
+	// which will then be ignored for the start or enable operation. It's overruled
+	// and complimented by IgnoreDisabled.
+	DisabledServices map[int][]string
+}
+
+// ServicesStop attempts to start the services in `services`.
+// If the enable flag is provided, then services listed will also be
+// enabled.
+// If the map of disabled services is set, then on a per-uid basis the services
+// listed in `services` can be filtered out.
+func (client *Client) ServicesStart(ctx context.Context, services []string, opts ClientServicesStartOptions) (startFailures, stopFailures []ServiceFailure, err error) {
 	// If no disabled services lists are provided, then we do not need to filter out services
 	// per-user. In this case lets
-	if len(disabledSvcs) == 0 {
+	if len(opts.DisabledServices) == 0 {
 		return client.serviceControlCall(ctx, &ServiceInstruction{
 			Action:   "start",
 			Services: services,
-			Enable:   enable,
+			Enable:   opts.Enable,
 		})
 	}
 
@@ -359,7 +386,7 @@ func (client *Client) ServicesStart(ctx context.Context, services []string, disa
 
 	for _, uid := range uids {
 		headers := map[string]string{"Content-Type": "application/json"}
-		filtered := filterDisabledServices(services, disabledSvcs[uid])
+		filtered := filterDisabledServices(services, opts.DisabledServices[uid])
 		if len(filtered) == 0 {
 			// Save an expensive call
 			continue
@@ -367,7 +394,7 @@ func (client *Client) ServicesStart(ctx context.Context, services []string, disa
 		reqBody, err := json.Marshal(&ServiceInstruction{
 			Action:   "start",
 			Services: filtered,
-			Enable:   enable,
+			Enable:   opts.Enable,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -387,6 +414,9 @@ func (client *Client) ServicesStart(ctx context.Context, services []string, disa
 	return client.decodeControlResponses(responses)
 }
 
+// ServicesStop attempts to stop the services in `services`.
+// If the disable flag is set then the services listed also will
+// be disabled.
 func (client *Client) ServicesStop(ctx context.Context, services []string, disable bool) (stopFailures []ServiceFailure, err error) {
 	_, stopFailures, err = client.serviceControlCall(ctx, &ServiceInstruction{
 		Action:   "stop",
@@ -396,6 +426,8 @@ func (client *Client) ServicesStop(ctx context.Context, services []string, disab
 	return stopFailures, err
 }
 
+// ServicesRestart attempts to restart or reload active services in `services`.
+// If the reload flag is set then "systemctl reload-or-restart" is attempted.
 func (client *Client) ServicesRestart(ctx context.Context, services []string, reload bool) (restartFailures []ServiceFailure, err error) {
 	restartFailures, _, err = client.serviceControlCall(ctx, &ServiceInstruction{
 		Action:   "restart",
