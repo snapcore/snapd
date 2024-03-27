@@ -391,20 +391,20 @@ func (s *appArmorSuite) TestSetupSnapConfineSnippetsNoSnippets(c *C) {
 	dirs.SetRootDir(c.MkDir())
 	defer dirs.SetRootDir("")
 
-	restore := osutil.MockIsHomeUsingNFS(func() (bool, error) { return false, nil })
+	restore := osutil.MockIsHomeUsingRemoteFS(func() (bool, error) { return false, nil })
 	defer restore()
 	restore = osutil.MockIsRootWritableOverlay(func() (string, error) { return "", nil })
 	defer restore()
 	restore = apparmor.MockLoadHomedirs(func() ([]string, error) { return nil, nil })
 	defer restore()
 
-	// No features, no NFS, no Overlay, no homedirs
+	// No features, no remote file system, no Overlay, no homedirs
 	wasChanged, err := apparmor.SetupSnapConfineSnippets()
 	c.Check(err, IsNil)
 	c.Check(wasChanged, Equals, false)
 
-	// Because overlay/nfs is not used there are no local policy files but the
-	// directory was created.
+	// Because overlay/remote file system is not used there are no local
+	// policy files but the directory was created.
 	files, err := ioutil.ReadDir(apparmor.SnapConfineAppArmorDir)
 	c.Assert(err, IsNil)
 	c.Assert(files, HasLen, 0)
@@ -424,7 +424,7 @@ func (s *appArmorSuite) TestSetupSnapConfineSnippetsHomedirs(c *C) {
 
 	restore := osutil.MockIsRootWritableOverlay(func() (string, error) { return "", nil })
 	defer restore()
-	restore = osutil.MockIsHomeUsingNFS(func() (bool, error) { return false, nil })
+	restore = osutil.MockIsHomeUsingRemoteFS(func() (bool, error) { return false, nil })
 	defer restore()
 
 	// Setup the system-params which is read by loadHomedirs in SetupSnapConfineSnippets
@@ -458,7 +458,7 @@ func (s *appArmorSuite) TestSetupSnapConfineGeneratedPolicyWithHomedirsLoadError
 	defer restore()
 	restore = osutil.MockIsRootWritableOverlay(func() (string, error) { return "", nil })
 	defer restore()
-	restore = osutil.MockIsHomeUsingNFS(func() (bool, error) { return false, nil })
+	restore = osutil.MockIsHomeUsingRemoteFS(func() (bool, error) { return false, nil })
 	defer restore()
 	restore = apparmor.MockLoadHomedirs(func() ([]string, error) { return nil, fmt.Errorf("failed to load") })
 	defer restore()
@@ -483,7 +483,7 @@ func (s *appArmorSuite) TestSetupSnapConfineSnippetsBPF(c *C) {
 
 	restore := osutil.MockIsRootWritableOverlay(func() (string, error) { return "", nil })
 	defer restore()
-	restore = osutil.MockIsHomeUsingNFS(func() (bool, error) { return false, nil })
+	restore = osutil.MockIsHomeUsingRemoteFS(func() (bool, error) { return false, nil })
 	defer restore()
 	restore = apparmor.MockLoadHomedirs(func() ([]string, error) { return nil, nil })
 	defer restore()
@@ -517,7 +517,7 @@ func (s *appArmorSuite) TestSetupSnapConfineGeneratedPolicyWithBPFProbeError(c *
 	defer restore()
 	restore = osutil.MockIsRootWritableOverlay(func() (string, error) { return "", nil })
 	defer restore()
-	restore = osutil.MockIsHomeUsingNFS(func() (bool, error) { return false, nil })
+	restore = osutil.MockIsHomeUsingRemoteFS(func() (bool, error) { return false, nil })
 	defer restore()
 	restore = apparmor.MockLoadHomedirs(func() ([]string, error) { return nil, nil })
 	defer restore()
@@ -547,7 +547,7 @@ func (s *appArmorSuite) TestSetupSnapConfineSnippetsOverlay(c *C) {
 	// Make it appear as if overlay workaround was needed.
 	restore := osutil.MockIsRootWritableOverlay(func() (string, error) { return "/upper", nil })
 	defer restore()
-	restore = osutil.MockIsHomeUsingNFS(func() (bool, error) { return false, nil })
+	restore = osutil.MockIsHomeUsingRemoteFS(func() (bool, error) { return false, nil })
 	defer restore()
 	restore = apparmor.MockLoadHomedirs(func() ([]string, error) { return nil, nil })
 	defer restore()
@@ -570,12 +570,12 @@ func (s *appArmorSuite) TestSetupSnapConfineSnippetsOverlay(c *C) {
 	c.Assert(string(data), testutil.Contains, "\"/upper/{,**/}\" r,")
 }
 
-func (s *appArmorSuite) TestSetupSnapConfineSnippetsNFS(c *C) {
+func (s *appArmorSuite) TestSetupSnapConfineSnippetsRemoteFS(c *C) {
 	dirs.SetRootDir(c.MkDir())
 	defer dirs.SetRootDir("")
 
-	// Make it appear as if NFS workaround was needed.
-	restore := osutil.MockIsHomeUsingNFS(func() (bool, error) { return true, nil })
+	// Make it appear as if remote file system workaround was needed.
+	restore := osutil.MockIsHomeUsingRemoteFS(func() (bool, error) { return true, nil })
 	defer restore()
 	restore = osutil.MockIsRootWritableOverlay(func() (string, error) { return "", nil })
 	defer restore()
@@ -586,7 +586,7 @@ func (s *appArmorSuite) TestSetupSnapConfineSnippetsNFS(c *C) {
 	c.Check(err, IsNil)
 	c.Check(wasChanged, Equals, true)
 
-	// Because NFS is being used, we have the extra policy file.
+	// Because remote file system is being used, we have the extra policy file.
 	files, err := ioutil.ReadDir(apparmor.SnapConfineAppArmorDir)
 	c.Assert(err, IsNil)
 	c.Assert(files, HasLen, 1)
@@ -600,7 +600,7 @@ func (s *appArmorSuite) TestSetupSnapConfineSnippetsNFS(c *C) {
 	c.Assert(fn, testutil.FileContains, "network inet6,")
 }
 
-// Test behavior when isHomeUsingNFS fails.
+// Test behavior when isHomeUsingRemoteFS fails.
 func (s *appArmorSuite) TestSetupSnapConfineGeneratedPolicyError1(c *C) {
 	dirs.SetRootDir(c.MkDir())
 	defer dirs.SetRootDir("")
@@ -608,8 +608,8 @@ func (s *appArmorSuite) TestSetupSnapConfineGeneratedPolicyError1(c *C) {
 	log, restore := logger.MockLogger()
 	defer restore()
 
-	// Make it appear as if NFS detection was broken.
-	restore = osutil.MockIsHomeUsingNFS(func() (bool, error) { return false, fmt.Errorf("broken") })
+	// Make it appear as if remote file system detection was broken.
+	restore = osutil.MockIsHomeUsingRemoteFS(func() (bool, error) { return false, fmt.Errorf("broken") })
 	defer restore()
 
 	// Make it appear as if overlay was not used.
@@ -621,9 +621,9 @@ func (s *appArmorSuite) TestSetupSnapConfineGeneratedPolicyError1(c *C) {
 	defer restore()
 
 	wasChanged, err := apparmor.SetupSnapConfineSnippets()
-	// NOTE: Errors in determining NFS are non-fatal to prevent snapd from
-	// failing to operate. A warning message is logged but system operates as
-	// if NFS was not active.
+	// NOTE: Errors in determining remote file system are non-fatal to prevent
+	// snapd from failing to operate. A warning message is logged but system
+	// operates as if remote file system was not active.
 	c.Check(err, IsNil)
 	c.Check(wasChanged, Equals, false)
 
@@ -634,7 +634,7 @@ func (s *appArmorSuite) TestSetupSnapConfineGeneratedPolicyError1(c *C) {
 	c.Check(files, HasLen, 0)
 
 	// But an error was logged
-	c.Check(log.String(), testutil.Contains, "cannot determine if NFS is in use: broken")
+	c.Check(log.String(), testutil.Contains, "cannot determine if remote file system is in use: broken")
 }
 
 // Test behavior when MkdirAll fails
@@ -661,8 +661,8 @@ func (s *appArmorSuite) TestSetupSnapConfineGeneratedPolicyError3(c *C) {
 	dirs.SetRootDir(c.MkDir())
 	defer dirs.SetRootDir("")
 
-	// Make it appear as if NFS workaround was not needed.
-	restore := osutil.MockIsHomeUsingNFS(func() (bool, error) { return false, nil })
+	// Make it appear as if remote file system workaround was not needed.
+	restore := osutil.MockIsHomeUsingRemoteFS(func() (bool, error) { return false, nil })
 	defer restore()
 
 	// Make it appear as if overlay was not used.
