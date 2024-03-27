@@ -26,18 +26,18 @@ import (
 
 var etcFstab = "/etc/fstab"
 
-// isHomeUsingNFS returns true if NFS mounts are defined or mounted under /home.
+// isHomeUsingRemoteFS returns true if NFS mounts are defined or mounted under /home.
 //
 // Internally /proc/self/mountinfo and /etc/fstab are interrogated (for current
 // and possible mounted filesystems).  If either of those describes NFS
 // filesystem mounted under or beneath /home/ then the return value is true.
-var isHomeUsingNFS = func() (bool, error) {
+var isHomeUsingRemoteFS = func() (bool, error) {
 	mountinfo, err := LoadMountInfo()
 	if err != nil {
 		return false, fmt.Errorf("cannot parse mountinfo: %s", err)
 	}
 	for _, entry := range mountinfo {
-		if (entry.FsType == "nfs4" || entry.FsType == "nfs" || entry.FsType == "autofs") && (strings.HasPrefix(entry.MountDir, "/home/") || entry.MountDir == "/home") {
+		if (entry.FsType == "nfs4" || entry.FsType == "nfs" || entry.FsType == "autofs" || entry.FsType == "cifs") && (strings.HasPrefix(entry.MountDir, "/home/") || entry.MountDir == "/home") {
 			return true, nil
 		}
 	}
@@ -46,7 +46,7 @@ var isHomeUsingNFS = func() (bool, error) {
 		return false, fmt.Errorf("cannot parse %s: %s", etcFstab, err)
 	}
 	for _, entry := range fstab.Entries {
-		if (entry.Type == "nfs4" || entry.Type == "nfs") && (strings.HasPrefix(entry.Dir, "/home/") || entry.Dir == "/home") {
+		if (entry.Type == "nfs4" || entry.Type == "nfs" || entry.Type == "cifs") && (strings.HasPrefix(entry.Dir, "/home/") || entry.Dir == "/home") {
 			return true, nil
 		}
 	}
