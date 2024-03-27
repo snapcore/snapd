@@ -634,7 +634,7 @@ func (s *aspectSuite) TestAspectUnsetWithNestedEntry(c *C) {
 	c.Assert(err, testutil.ErrorIs, &aspects.NotFoundError{})
 }
 
-func (s *aspectSuite) TestAspectUnsetLeafUnsetsParent(c *C) {
+func (s *aspectSuite) TestAspectUnsetLeafLeavesEmptyParent(c *C) {
 	databag := aspects.NewJSONDataBag()
 	aspectBundle, err := aspects.NewBundle("acc", "foo", map[string]interface{}{
 		"my-aspect": map[string]interface{}{
@@ -657,8 +657,9 @@ func (s *aspectSuite) TestAspectUnsetLeafUnsetsParent(c *C) {
 	err = aspect.Unset(databag, "bar")
 	c.Assert(err, IsNil)
 
-	_, err = aspect.Get(databag, "foo")
-	c.Assert(err, testutil.ErrorIs, &aspects.NotFoundError{})
+	value, err = aspect.Get(databag, "foo")
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, map[string]interface{}{})
 }
 
 func (s *aspectSuite) TestAspectUnsetAlreadyUnsetEntry(c *C) {
@@ -1832,7 +1833,7 @@ func (s *aspectSuite) TestUnsetUnmatchedPlaceholderMid(c *C) {
 			"one": "value",
 			"two": "other",
 		},
-		// should be completely removed (only has a "one" path)
+		// the nested value should be removed, leaving an empty map
 		"b": map[string]interface{}{
 			"one": "value",
 		},
@@ -1852,6 +1853,7 @@ func (s *aspectSuite) TestUnsetUnmatchedPlaceholderMid(c *C) {
 		"a": map[string]interface{}{
 			"two": "other",
 		},
+		"b": map[string]interface{}{},
 		"c": map[string]interface{}{
 			"two": "value",
 		},

@@ -1398,15 +1398,12 @@ func unset(subKeys []string, index int, node map[string]json.RawMessage) (json.R
 	matchAll := isPlaceholder(key)
 
 	if index == len(subKeys)-1 {
-		if !matchAll {
-			delete(node, key)
-		}
-
-		if matchAll || len(node) == 0 {
+		if matchAll {
 			// remove entire level
 			return nil, nil
 		}
 
+		delete(node, key)
 		return json.Marshal(node)
 	}
 
