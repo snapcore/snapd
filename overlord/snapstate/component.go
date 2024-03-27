@@ -50,7 +50,7 @@ func InstallComponentPath(st *state.State, csi *snap.ComponentSideInfo, info *sn
 	}
 
 	// Read ComponentInfo
-	compInfo, _, err := backend.OpenComponentFile(path)
+	compInfo, _, err := backend.OpenComponentFile(path, info)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +179,11 @@ func doInstallComponent(st *state.State, snapst *SnapState, compSetup *Component
 			compSi.Component))
 		addTask(unlink)
 	}
+
+	// security
+	setupSecurity := st.NewTask("setup-profiles", fmt.Sprintf(i18n.G("Setup component %q%s security profiles"), compSi.Component, revisionStr))
+	addTask(setupSecurity)
+	prev = setupSecurity
 
 	// finalize (sets SnapState)
 	linkSnap := st.NewTask("link-component",

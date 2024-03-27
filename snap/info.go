@@ -184,6 +184,12 @@ func MountDir(name string, revision Revision) string {
 	return filepath.Join(BaseDir(name), revision.String())
 }
 
+// ComponentMountDir returns the base directory where it gets mounted of the snap with
+// the given name and revision.
+func ComponentMountDir(componentName string, snapInstance string, snapRevision Revision) string {
+	return filepath.Join(BaseDir(snapInstance), "components", snapRevision.String(), componentName)
+}
+
 // MountFile returns the path where the snap file that is mounted is installed,
 // using the default blob directory (dirs.SnapBlobDir).
 func MountFile(name string, revision Revision) string {
@@ -250,6 +256,13 @@ func CommonDataDir(name string) string {
 // name. The name can be either a snap name or snap instance name.
 func HooksDir(name string, revision Revision) string {
 	return filepath.Join(MountDir(name, revision), "meta", "hooks")
+}
+
+// ComponentHooksDir returns the directory containing the component's hooks for
+// the given component hook name. The provided snap name can be either a snap
+// name or snap instance name.
+func ComponentHooksDir(snapName, componentName string, revision Revision) string {
+	return filepath.Join(BaseDir(snapName), "components", revision.String(), componentName, "meta", "hooks")
 }
 
 func snapDataDir(opts *dirs.SnapDirOptions) string {
@@ -832,22 +845,26 @@ func (s *Info) AppsForSlot(slot *SlotInfo) []*AppInfo {
 // HooksForPlug returns the list of hooks that are associated with the given
 // plug. If the plug is unscoped, then all hooks are returned.
 func (s *Info) HooksForPlug(plug *PlugInfo) []*HookInfo {
+	return hooksForPlug(plug, s.Hooks)
+}
+
+func hooksForPlug(plug *PlugInfo, hooks map[string]*HookInfo) []*HookInfo {
 	if plug.Unscoped {
-		hooks := make([]*HookInfo, 0, len(s.Hooks))
-		for _, hook := range s.Hooks {
-			hooks = append(hooks, hook)
+		plugHooks := make([]*HookInfo, 0, len(hooks))
+		for _, hook := range hooks {
+			plugHooks = append(plugHooks, hook)
 		}
-		return hooks
+		return plugHooks
 	}
 
-	var hooks []*HookInfo
-	for _, hook := range s.Hooks {
+	var plugHooks []*HookInfo
+	for _, hook := range hooks {
 		if _, ok := hook.Plugs[plug.Name]; ok {
-			hooks = append(hooks, hook)
+			plugHooks = append(plugHooks, hook)
 		}
 	}
 
-	return hooks
+	return plugHooks
 }
 
 // HooksForSlot returns the list of hooks that are associated with the given
@@ -1221,6 +1238,18 @@ type HookInfo struct {
 	Explicit bool
 }
 
+// Path returns the path to the this hook. This handles both the component and
+// regular hook cases.
+func (hook *HookInfo) Path() string {
+	var dir string
+	if hook.Component != nil {
+		dir = ComponentHooksDir(hook.Snap.InstanceName(), hook.Component.Name, hook.Snap.Revision)
+	} else {
+		dir = HooksDir(hook.Snap.InstanceName(), hook.Snap.Revision)
+	}
+	return filepath.Join(dir, hook.Name)
+}
+
 // SystemUsernameInfo provides information about a system username (ie, a
 // UNIX user and group with the same name). The scope defines visibility of the
 // username wrt the snap and the system. Defined scopes:
@@ -1361,6 +1390,12 @@ func (app *AppInfo) EnvChain() []osutil.ExpandableEnv {
 // Security tags are used by various security subsystems as "profile names" and
 // sometimes also as a part of the file name.
 func (hook *HookInfo) SecurityTag() string {
+	if hook.Component != nil {
+		return HookSecurityTag(SnapComponentName(
+			hook.Snap.InstanceName(),
+			hook.Component.Name,
+		), hook.Name)
+	}
 	return HookSecurityTag(hook.Snap.InstanceName(), hook.Name)
 }
 
@@ -1599,6 +1634,21 @@ func SplitInstanceName(instanceName string) (snapName, instanceKey string) {
 		instanceKey = split[1]
 	}
 	return snapName, instanceKey
+}
+
+// SplitSnapComponentInstanceName extracts the snap component name from
+// a snap component instance name. Example:
+//   - SplitSnapComponentInstanceName("snap+component_1") -> "snap_1", "component"
+func SplitSnapComponentInstanceName(name string) (snapInstance, componentName string) {
+	snapInstance, componentName, _ = strings.Cut(name, "+")
+	return snapInstance, componentName
+}
+
+// SnapComponentName takes the snap name, the component name, and the
+// instance key and returns an instance name of the snap component. The instance
+// key will only be included if it is not empty.
+func SnapComponentName(snapInstance, componentName string) string {
+	return fmt.Sprintf("%s+%s", snapInstance, componentName)
 }
 
 // InstanceName takes the snap name and the instance key and returns an instance

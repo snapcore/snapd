@@ -67,6 +67,37 @@ func TaskComponentSetup(t *state.Task) (*ComponentSetup, *SnapSetup, error) {
 	return &compSetup, snapsup, nil
 }
 
+func TaskComponentSetups(t *state.Task) ([]*ComponentSetup, *SnapSetup, error) {
+	snapsup, err := TaskSnapSetup(t)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var setups []*ComponentSetup
+	err = t.Get("component-setups", &setups)
+	if err != nil && !errors.Is(err, state.ErrNoState) {
+		return nil, nil, err
+	}
+
+	if err == nil {
+		return setups, snapsup, nil
+	}
+
+	var id string
+	if err := t.Get("component-setups-task", &id); err != nil {
+		return nil, nil, err
+	}
+
+	ts := t.State().Task(id)
+	if ts == nil {
+		return nil, nil, fmt.Errorf("internal error: tasks are being pruned")
+	}
+	if err := ts.Get("component-setups", &setups); err != nil {
+		return nil, nil, err
+	}
+	return setups, snapsup, nil
+}
+
 func compSetupAndState(t *state.Task) (*ComponentSetup, *SnapSetup, *SnapState, error) {
 	csup, ssup, err := TaskComponentSetup(t)
 	if err != nil {
@@ -165,7 +196,7 @@ func (m *SnapManager) doMountComponent(t *state.Task, _ *tomb.Tomb) (err error) 
 	var readInfoErr error
 	for i := 0; i < 10; i++ {
 		compMntDir := cpi.MountDir()
-		_, readInfoErr = readComponentInfo(compMntDir)
+		_, readInfoErr = readComponentInfo(compMntDir, nil)
 		if readInfoErr == nil {
 			logger.Debugf("component %q (%v) available at %q",
 				csi.Component, compSetup.Revision(), compMntDir)
@@ -203,9 +234,9 @@ func (m *SnapManager) doMountComponent(t *state.Task, _ *tomb.Tomb) (err error) 
 }
 
 // Maybe we will need flags as in readInfo
-var readComponentInfo = func(compMntDir string) (*snap.ComponentInfo, error) {
+var readComponentInfo = func(compMntDir string, snapInfo *snap.Info) (*snap.ComponentInfo, error) {
 	cont := snapdir.New(compMntDir)
-	return snap.ReadComponentInfoFromContainer(cont)
+	return snap.ReadComponentInfoFromContainer(cont, snapInfo)
 }
 
 func (m *SnapManager) undoMountComponent(t *state.Task, _ *tomb.Tomb) error {
