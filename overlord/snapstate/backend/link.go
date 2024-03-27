@@ -25,6 +25,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/snapcore/snapd/boot"
 	"github.com/snapcore/snapd/cmd/snaplock/runinhibit"
@@ -182,6 +183,25 @@ func (b Backend) LinkSnap(info *snap.Info, dev snap.Device, linkCtx LinkContext,
 	}
 
 	return rebootInfo, nil
+}
+
+func componentLinkPath(mountDir string) (string, error) {
+	// The symlink to current is the mount with the stripped revision
+	revStart := strings.LastIndex(mountDir, "_")
+	if revStart == -1 {
+		return "", fmt.Errorf("internal error: no revision in %q", mountDir)
+	}
+	return mountDir[0:revStart], nil
+}
+
+func (b Backend) LinkComponent(cpi snap.ContainerPlaceInfo) error {
+	mountDir := cpi.MountDir()
+	linkPath, err := componentLinkPath(mountDir)
+	if err != nil {
+		return err
+	}
+
+	return osutil.AtomicSymlink(filepath.Base(mountDir), linkPath)
 }
 
 func (b Backend) StartServices(apps []*snap.AppInfo, disabledSvcs []string, meter progress.Meter, tm timings.Measurer) error {
@@ -362,6 +382,24 @@ func removeCurrentSymlinks(info snap.PlaceInfo) error {
 		return fmt.Errorf("cannot remove snap current symlink: %v", err1)
 	} else if err2 != nil {
 		return fmt.Errorf("cannot remove snap current symlink: %v", err2)
+	}
+
+	return nil
+}
+
+func (b Backend) UnlinkComponent(cpi snap.ContainerPlaceInfo) error {
+	linkPath, err := componentLinkPath(cpi.MountDir())
+	if err != nil {
+		return err
+	}
+
+	err = os.Remove(linkPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			logger.Noticef("cannot remove symlink %q: %v", linkPath, err)
+		} else {
+			return err
+		}
 	}
 
 	return nil
