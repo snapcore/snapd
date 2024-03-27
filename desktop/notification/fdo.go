@@ -43,6 +43,7 @@ type fdoBackend struct {
 	mu              sync.Mutex
 	serverToLocalID map[uint32]ID
 	localToServerID map[ID]uint32
+	parameters      map[ID][]Action
 	lastRemove      time.Time
 	desktopID       string
 }
@@ -59,8 +60,13 @@ var newFdoBackend = func(conn *dbus.Conn, desktopID string) NotificationManager 
 		obj:             conn.Object(dBusName, dBusObjectPath),
 		serverToLocalID: make(map[uint32]ID),
 		localToServerID: make(map[ID]uint32),
+		parameters:      make(map[ID][]Action),
 		desktopID:       desktopID,
 	}
+}
+
+func (srv *fdoBackend) GetConn() *dbus.Conn {
+	return srv.conn
 }
 
 // ServerInformation returns the information about the notification server.
@@ -99,6 +105,9 @@ func (srv *fdoBackend) SendNotification(id ID, msg *Message) error {
 	srv.mu.Lock()
 	serverSideId := srv.localToServerID[id]
 	srv.mu.Unlock()
+	if len(msg.Actions) != 0 {
+		srv.parameters[id] = msg.Actions
+	}
 	call := srv.obj.Call(dBusInterfaceName+".Notify", 0,
 		msg.AppName, serverSideId, msg.Icon, msg.Title, msg.Body,
 		flattenActions(msg.Actions), hints,
@@ -166,8 +175,8 @@ func (srv *fdoBackend) IdleDuration() time.Duration {
 	return time.Since(srv.lastRemove)
 }
 
-func (srv *fdoBackend) HandleNotifications(ctx context.Context) error {
-	return srv.ObserveNotifications(ctx, nil)
+func (srv *fdoBackend) HandleNotifications(ctx context.Context, observer Observer) error {
+	return srv.ObserveNotifications(ctx, observer)
 }
 
 // ObserveNotifications blocks and processes message notification signals.
@@ -212,14 +221,30 @@ func (srv *fdoBackend) ObserveNotifications(ctx context.Context, observer Observ
 			if !ok {
 				return nil
 			}
-			if err := srv.processSignal(sig, observer); err != nil {
+			if err := processSignal(srv, sig, observer); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func (srv *fdoBackend) processSignal(sig *dbus.Signal, observer Observer) error {
+func (srv *fdoBackend) GracefulShutdown() {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	// On shutdown, close all the notifications, because the next time
+	// the agent is launched, all the associations between serverID and
+	// clientID (and parameters for each action) would have been lost, so
+	// it will be impossible to answer to them, because the new process has
+	// no way of knowing that a notification belonged to an old agent process.
+	// (Maybe close only those with actions? But that can be confusing for the
+	// user...)
+	for serverId := range srv.serverToLocalID {
+		call := srv.obj.Call(dBusInterfaceName+".CloseNotification", 0, serverId)
+		call.Store()
+	}
+}
+
+var processSignal = func(srv *fdoBackend, sig *dbus.Signal, observer Observer) error {
 	switch sig.Name {
 	case dBusInterfaceName + ".NotificationClosed":
 		if err := srv.processNotificationClosed(sig, observer); err != nil {
@@ -241,32 +266,28 @@ func (srv *fdoBackend) processNotificationClosed(sig *dbus.Signal, observer Obse
 	if !ok {
 		return fmt.Errorf("expected first body element to be uint32, got %T", sig.Body[0])
 	}
-	reason, ok := sig.Body[1].(uint32)
+	_, ok = sig.Body[1].(uint32)
 	if !ok {
 		return fmt.Errorf("expected second body element to be uint32, got %T", sig.Body[1])
 	}
 
 	srv.mu.Lock()
+	defer srv.mu.Unlock()
 
 	// we may receive signals for notifications we don't know about, silently
 	// ignore them.
 	localID, ok := srv.serverToLocalID[id]
 	if !ok {
-		srv.mu.Unlock()
 		return nil
 	}
 
 	delete(srv.localToServerID, localID)
 	delete(srv.serverToLocalID, id)
+	if _, ok := srv.parameters[localID]; ok {
+		delete(srv.parameters, localID)
+	}
 	if len(srv.serverToLocalID) == 0 {
 		srv.lastRemove = time.Now()
-	}
-
-	// unlock the mutex before calling observer
-	srv.mu.Unlock()
-
-	if observer != nil {
-		return observer.NotificationClosed(localID, CloseReason(reason))
 	}
 	return nil
 }
@@ -285,7 +306,24 @@ func (srv *fdoBackend) processActionInvoked(sig *dbus.Signal, observer Observer)
 	}
 
 	if observer != nil {
-		return observer.ActionInvoked(id, actionKey)
+		srv.mu.Lock()
+		localId, ok := srv.serverToLocalID[id]
+		if !ok {
+			srv.mu.Unlock()
+			return nil
+		}
+		var parameters []string
+
+		if parametersEntry, ok := srv.parameters[localId]; ok {
+			for _, entry := range parametersEntry {
+				if entry.ActionKey == actionKey {
+					parameters = entry.Parameters
+					break
+				}
+			}
+		}
+		srv.mu.Unlock()
+		return observer.ActionInvoked(localId, actionKey, parameters)
 	}
 	return nil
 }

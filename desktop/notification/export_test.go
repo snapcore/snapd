@@ -19,7 +19,12 @@
 
 package notification
 
-import "github.com/godbus/dbus"
+import (
+	"sync"
+	"time"
+
+	"github.com/godbus/dbus"
+)
 
 var (
 	NewFdoBackend = newFdoBackend
@@ -29,8 +34,12 @@ var (
 type FdoBackend = fdoBackend
 type GtkBackend = gtkBackend
 
+func (srv *fdoBackend) GetParameters() map[ID][]Action {
+	return srv.parameters
+}
+
 func (srv *fdoBackend) ProcessSignal(sig *dbus.Signal, observer Observer) error {
-	return srv.processSignal(sig, observer)
+	return processSignal(srv, sig, observer)
 }
 
 func MockNewFdoBackend(f func(conn *dbus.Conn, desktopID string) NotificationManager) (restore func()) {
@@ -47,4 +56,48 @@ func MockNewGtkBackend(f func(conn *dbus.Conn, desktopID string) (NotificationMa
 	return func() {
 		newGtkBackend = old
 	}
+}
+
+var signalCounter int = 0
+var mu sync.Mutex
+
+func MockProcessSignal() (restore func()) {
+	signalCounter = 0
+	old := processSignal
+	processSignal = func(srv *fdoBackend, signal *dbus.Signal, observer Observer) error {
+		mu.Lock()
+		signalCounter++
+		mu.Unlock()
+		return old(srv, signal, observer)
+	}
+	return func() {
+		processSignal = old
+	}
+}
+
+func GetSignalCounter() int {
+	mu.Lock()
+	counter := signalCounter
+	signalCounter = 0
+	mu.Unlock()
+	return counter
+}
+
+func WaitForNSignals(n int) {
+	for {
+		mu.Lock()
+		if signalCounter >= n {
+			signalCounter -= n
+			mu.Unlock()
+			break
+		}
+		mu.Unlock()
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func ResetNSignals() {
+	mu.Lock()
+	signalCounter = 0
+	mu.Unlock()
 }

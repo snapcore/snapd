@@ -27,6 +27,7 @@ import (
 
 	"github.com/godbus/dbus"
 	. "gopkg.in/check.v1"
+	"gopkg.in/tomb.v2"
 
 	"github.com/snapcore/snapd/desktop/notification"
 	"github.com/snapcore/snapd/desktop/notification/notificationtest"
@@ -98,8 +99,15 @@ func (s *fdoSuite) TestSendNotificationSuccess(c *C) {
 		Priority:      notification.PriorityUrgent,
 		ExpireTimeout: time.Second * 1,
 		Actions: []notification.Action{
-			{ActionKey: "key-1", LocalizedText: "text-1"},
-			{ActionKey: "key-2", LocalizedText: "text-2"},
+			{
+				ActionKey:     "key-1",
+				LocalizedText: "text-1",
+				Parameters:    []string{"param1", "param2"},
+			},
+			{
+				ActionKey:     "key-2",
+				LocalizedText: "text-2",
+			},
 		},
 		Hints: []notification.Hint{
 			{Name: "hint-str", Value: "str"},
@@ -123,6 +131,16 @@ func (s *fdoSuite) TestSendNotificationSuccess(c *C) {
 		},
 		Expires: 1000,
 	})
+	parameters, ok := srv.GetParameters()["some-id"]
+	c.Check(ok, Equals, true)
+	c.Check(len(parameters), Equals, 2)
+	if parameters[0].ActionKey == "key-1" {
+		c.Check(parameters[0].Parameters, DeepEquals, []string{"param1", "param2"})
+		c.Check(len(parameters[1].Parameters), Equals, 0)
+	} else {
+		c.Check(parameters[1].Parameters, DeepEquals, []string{"param1", "param2"})
+		c.Check(len(parameters[0].Parameters), Equals, 0)
+	}
 }
 
 func (s *fdoSuite) TestSendNotificationWithServerDecidedExpireTimeout(c *C) {
@@ -177,7 +195,7 @@ func (s *fdoSuite) TestCloseNotificationUnknownNotification(c *C) {
 
 type testObserver struct {
 	notificationClosed func(notification.ID, notification.CloseReason) error
-	actionInvoked      func(uint32, string) error
+	actionInvoked      func(notification.ID, string, []string) error
 }
 
 func (o *testObserver) NotificationClosed(id notification.ID, reason notification.CloseReason) error {
@@ -187,9 +205,9 @@ func (o *testObserver) NotificationClosed(id notification.ID, reason notificatio
 	return nil
 }
 
-func (o *testObserver) ActionInvoked(id uint32, actionKey string) error {
+func (o *testObserver) ActionInvoked(id notification.ID, actionKey string, parameters []string) error {
 	if o.actionInvoked != nil {
-		return o.actionInvoked(id, actionKey)
+		return o.actionInvoked(id, actionKey, parameters)
 	}
 	return nil
 }
@@ -204,7 +222,7 @@ func (s *fdoSuite) TestObserveNotificationsContextAndSignalWatch(c *C) {
 	wg.Add(1)
 	go func() {
 		err := srv.ObserveNotifications(ctx, &testObserver{
-			actionInvoked: func(id uint32, actionKey string) error {
+			actionInvoked: func(id notification.ID, actionKey string, parameters []string) error {
 				select {
 				case signalDelivered <- struct{}{}:
 				default:
@@ -238,7 +256,7 @@ func (s *fdoSuite) TestObserveNotificationsProcessingError(c *C) {
 	wg.Add(1)
 	go func() {
 		err := srv.ObserveNotifications(context.TODO(), &testObserver{
-			actionInvoked: func(id uint32, actionKey string) error {
+			actionInvoked: func(id notification.ID, actionKey string, parameters []string) error {
 				signalDelivered <- struct{}{}
 				c.Check(id, Equals, uint32(42))
 				c.Check(actionKey, Equals, "action-key")
@@ -287,7 +305,7 @@ func (s *fdoSuite) TestProcessActionInvokedSignalSuccess(c *C) {
 		Name: "org.freedesktop.Notifications.ActionInvoked",
 		Body: []interface{}{uint32(42), "action-key"},
 	}, &testObserver{
-		actionInvoked: func(id uint32, actionKey string) error {
+		actionInvoked: func(id notification.ID, actionKey string, parameters []string) error {
 			called = true
 			c.Check(id, Equals, uint32(42))
 			c.Check(actionKey, Equals, "action-key")
@@ -304,7 +322,7 @@ func (s *fdoSuite) TestProcessActionInvokedSignalError(c *C) {
 		Name: "org.freedesktop.Notifications.ActionInvoked",
 		Body: []interface{}{uint32(42), "action-key"},
 	}, &testObserver{
-		actionInvoked: func(id uint32, actionKey string) error {
+		actionInvoked: func(id notification.ID, actionKey string, parameters []string) error {
 			return fmt.Errorf("boom")
 		},
 	})
@@ -400,4 +418,63 @@ func (s *fdoSuite) TestProcessNotificationClosedSignalBodyParseErrors(c *C) {
 		Body: []interface{}{true, uint32(2)},
 	}, &testObserver{})
 	c.Assert(err, ErrorMatches, "cannot process NotificationClosed signal: expected first body element to be uint32, got bool")
+}
+
+type notificationData struct {
+	id         notification.ID
+	actionKey  string
+	parameters []string
+}
+
+func (s *fdoSuite) TestNotificationWithActions(c *C) {
+	srv := notification.NewFdoBackend(s.SessionBus, "desktop-id").(*notification.FdoBackend)
+	restoreProcessSignal := notification.MockProcessSignal()
+	defer restoreProcessSignal()
+
+	tombS := tomb.Tomb{}
+	ch := make(chan notificationData)
+	observer := testObserver{
+		actionInvoked: func(id notification.ID, actionKey string, parameters []string) error {
+			ch <- notificationData{
+				id:         id,
+				actionKey:  actionKey,
+				parameters: parameters,
+			}
+			return nil
+		},
+	}
+	tombS.Go(func() error {
+		ctx := tombS.Context(context.Background())
+		return srv.HandleNotifications(ctx, &observer)
+	})
+	defer tombS.Kill(nil)
+
+	err := srv.SendNotification("some-id", &notification.Message{
+		Actions: []notification.Action{
+			{
+				ActionKey:     "key-1",
+				LocalizedText: "text-1",
+				Parameters:    []string{"param1", "param2"},
+			},
+			{
+				ActionKey:     "key-2",
+				LocalizedText: "text-2",
+			},
+		},
+	})
+	c.Assert(err, IsNil)
+
+	s.backend.InvokeAction(1, "key-1")
+
+	recvNotification := <-ch
+	c.Assert(recvNotification.id, Equals, notification.ID("some-id"))
+	c.Assert(recvNotification.actionKey, Equals, "key-1")
+	c.Assert(recvNotification.parameters, DeepEquals, []string{"param1", "param2"})
+
+	s.backend.InvokeAction(1, "key-2")
+
+	recvNotification = <-ch
+	c.Assert(recvNotification.id, Equals, notification.ID("some-id"))
+	c.Assert(recvNotification.actionKey, Equals, "key-2")
+	c.Assert(recvNotification.parameters, IsNil)
 }

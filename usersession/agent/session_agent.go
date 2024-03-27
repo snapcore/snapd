@@ -183,12 +183,6 @@ func (s *SessionAgent) Init() error {
 		return err
 	}
 
-	// Set up notification manager
-	// Note that session bus may be nil, see the comment in tryConnectSessionBus.
-	if s.bus != nil {
-		s.notificationMgr = notification.NewNotificationManager(s.bus, "io.snapcraft.SessionAgent")
-	}
-
 	agentSocket := fmt.Sprintf("%s/%d/snapd-session-agent.socket", dirs.XdgRuntimeDirBase, os.Getuid())
 	if l, err := netutil.GetListener(agentSocket, listenerMap); err != nil {
 		return fmt.Errorf("cannot listen on socket %s: %v", agentSocket, err)
@@ -224,6 +218,13 @@ func (s *SessionAgent) tryConnectSessionBus() (err error) {
 		}
 	}()
 
+	// Set up notification manager
+	// Use the sessionAgentBusName to make it compatible with GApplication
+	// Also, do it before requesting the well-known name to ensure that, if the
+	// agent has been launched with DBus-Activation, the org.freedesktop.Application
+	// interface is available when the name appears in the bus.
+	s.notificationMgr = notification.NewNotificationManager(s.bus, sessionAgentBusName)
+
 	reply, err := s.bus.RequestName(sessionAgentBusName, dbus.NameFlagDoNotQueue)
 	if err != nil {
 		return err
@@ -241,6 +242,10 @@ func (s *SessionAgent) addRoutes() {
 		s.router.Handle(c.Path, c).Name(c.Path)
 	}
 	s.router.NotFoundHandler = NotFound("not found")
+}
+
+func (s *SessionAgent) GracefulShutdown() {
+	s.notificationMgr.GracefulShutdown()
 }
 
 func (s *SessionAgent) Start() {
@@ -313,10 +318,35 @@ Loop:
 	return nil
 }
 
+type testObserver struct {
+	actionInvoked func(notification.ID, string, []string) error
+}
+
+func (t testObserver) ActionInvoked(id notification.ID, action string, params []string) error {
+	return t.actionInvoked(id, action, params)
+}
+
 // handleNotifications handles notifications in a blocking manner.
 // This should only be called when notificationMgr is available (i.e. s.bus is set).
 func (s *SessionAgent) handleNotifications() error {
-	err := s.notificationMgr.HandleNotifications(s.tomb.Context(context.Background()))
+	// This is just a simple test, it currently does nothing else than show the Notification ID,
+	// the actionKey and the parameters (if available)
+	observer := testObserver{
+		actionInvoked: func(id notification.ID, actionKey string, parameters []string) error {
+			fmt.Printf("Received action %s, %s, ", id, actionKey)
+			if parameters == nil {
+				fmt.Printf("without parameters")
+			} else {
+				for _, p := range parameters {
+					fmt.Printf("%s, ", p)
+				}
+			}
+			fmt.Printf("\n")
+
+			return nil
+		},
+	}
+	err := s.notificationMgr.HandleNotifications(s.tomb.Context(context.Background()), observer)
 	if err != nil {
 		logger.Noticef("%v", err)
 	}
