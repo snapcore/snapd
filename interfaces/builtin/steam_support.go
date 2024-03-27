@@ -184,8 +184,8 @@ mount options=(rw, rbind) /oldroot/run/dbus/system_bus_socket -> /newroot/run/db
 mount options=(rw, rbind) /oldroot/run/systemd/resolve/io.systemd.Resolve -> /newroot/run/systemd/resolve/io.systemd.Resolve,
 mount options=(rw, rbind) /bindfile* -> /newroot/run/host/container-manager,
 
-# Allow mounting Nvidia drivers into the sandbox
-mount options=(rw, rbind) /oldroot/var/lib/snapd/hostfs/usr/lib/@{multiarch}/** -> /newroot/var/lib/snapd/hostfs/usr/lib/@{multiarch}/**,
+# Allow mounting Nvidia drivers and host libraries into the sandbox - copied from the general Nvidia driver support to allow all necessary libraries
+mount options=(rw, rbind) /oldroot/var/lib/snapd/hostfs/{,usr/}lib{,32,64,x32}/{,@{multiarch}/}** -> /newroot/var/lib/snapd/hostfs/{,usr/}lib{,32,64,x32}/{,@{multiarch}/}**,
 
 # Allow PV to access driver information and features necessary for some games to run
 mount options=(rw, rbind) /oldroot/var/lib/snapd/hostfs/usr/share/** -> /newroot/**,
