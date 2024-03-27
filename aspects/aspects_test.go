@@ -2265,3 +2265,77 @@ func (s *aspectSuite) TestUnsetUsingMapWithNilValuesAtLeaves(c *C) {
 	_, err = asp.Get(databag, "foo")
 	c.Assert(err, FitsTypeOf, &aspects.NotFoundError{})
 }
+
+func (s *aspectSuite) TestSetWithMultiplePathsNestedAtLeaves(c *C) {
+	databag := aspects.NewJSONDataBag()
+	aspectBundle, err := aspects.NewBundle("acc", "bundle", map[string]interface{}{
+		"foo": map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{"request": "foo.a", "storage": "foo.a"},
+				map[string]interface{}{"request": "foo.b", "storage": "foo.b"},
+			},
+		},
+	}, aspects.NewJSONSchema())
+	c.Assert(err, IsNil)
+
+	asp := aspectBundle.Aspect("foo")
+	c.Assert(asp, NotNil)
+
+	err = asp.Set(databag, "foo", map[string]interface{}{
+		"a": map[string]interface{}{
+			"c": "value",
+			"d": "other",
+		},
+		"b": "other",
+	})
+	c.Assert(err, IsNil)
+
+	err = asp.Set(databag, "foo", map[string]interface{}{
+		"a": map[string]interface{}{
+			"d": nil,
+		},
+		"b": nil,
+	})
+	c.Assert(err, IsNil)
+
+	value, err := asp.Get(databag, "foo")
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, map[string]interface{}{
+		// consistent with the previous configuration mechanism
+		"a": map[string]interface{}{},
+	})
+}
+
+func (s *aspectSuite) TestSetWithNilAndNonNilLeaves(c *C) {
+	databag := aspects.NewJSONDataBag()
+	aspectBundle, err := aspects.NewBundle("acc", "bundle", map[string]interface{}{
+		"foo": map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{"request": "foo", "storage": "foo"},
+			},
+		},
+	}, aspects.NewJSONSchema())
+	c.Assert(err, IsNil)
+
+	asp := aspectBundle.Aspect("foo")
+	c.Assert(asp, NotNil)
+
+	err = asp.Set(databag, "foo", map[string]interface{}{
+		"a": "value",
+		"b": "other",
+	})
+	c.Assert(err, IsNil)
+
+	err = asp.Set(databag, "foo", map[string]interface{}{
+		"a": nil,
+		"c": "value",
+	})
+	c.Assert(err, IsNil)
+
+	value, err := asp.Get(databag, "foo")
+	c.Assert(err, IsNil)
+	// nil values aren't stored but non-nil values are
+	c.Assert(value, DeepEquals, map[string]interface{}{
+		"c": "value",
+	})
+}
