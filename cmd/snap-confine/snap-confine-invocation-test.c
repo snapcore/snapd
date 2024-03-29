@@ -46,7 +46,7 @@ static void test_sc_invocation_basic(void) {
 
     sc_invocation inv SC_CLEANUP(sc_cleanup_invocation);
     ;
-    sc_init_invocation(&inv, args, "foo");
+    sc_init_invocation(&inv, args, "foo", NULL);
 
     g_assert_cmpstr(inv.base_snap_name, ==, "core");
     g_assert_cmpstr(inv.executable, ==, "/usr/lib/snapd/snap-exec");
@@ -55,6 +55,7 @@ static void test_sc_invocation_basic(void) {
     g_assert_cmpstr(inv.security_tag, ==, "snap.foo.app");
     g_assert_cmpstr(inv.snap_instance, ==, "foo");
     g_assert_cmpstr(inv.snap_name, ==, "foo");
+    g_assert_cmpstr(inv.snap_component, ==, NULL);
     g_assert_false(inv.classic_confinement);
     /* derived later */
     g_assert_false(inv.is_normal_mode);
@@ -65,11 +66,12 @@ static void test_sc_invocation_instance_key(void) {
 
     sc_invocation inv SC_CLEANUP(sc_cleanup_invocation);
     ;
-    sc_init_invocation(&inv, args, "foo_bar");
+    sc_init_invocation(&inv, args, "foo_bar", NULL);
 
     // Check the error that we've got
     g_assert_cmpstr(inv.snap_instance, ==, "foo_bar");
     g_assert_cmpstr(inv.snap_name, ==, "foo");
+    g_assert_cmpstr(inv.snap_component, ==, NULL);
     g_assert_cmpstr(inv.orig_base_snap_name, ==, "core");
     g_assert_cmpstr(inv.security_tag, ==, "snap.foo_bar.app");
     g_assert_cmpstr(inv.executable, ==, "/usr/lib/snapd/snap-exec");
@@ -84,7 +86,7 @@ static void test_sc_invocation_base_name(void) {
     struct sc_args *args SC_CLEANUP(sc_cleanup_args) = test_prepare_args("base-snap", NULL);
 
     sc_invocation inv SC_CLEANUP(sc_cleanup_invocation);
-    sc_init_invocation(&inv, args, "foo");
+    sc_init_invocation(&inv, args, "foo", NULL);
 
     g_assert_cmpstr(inv.base_snap_name, ==, "base-snap");
     g_assert_cmpstr(inv.executable, ==, "/usr/lib/snapd/snap-exec");
@@ -93,6 +95,7 @@ static void test_sc_invocation_base_name(void) {
     g_assert_cmpstr(inv.security_tag, ==, "snap.foo.app");
     g_assert_cmpstr(inv.snap_instance, ==, "foo");
     g_assert_cmpstr(inv.snap_name, ==, "foo");
+    g_assert_cmpstr(inv.snap_component, ==, NULL);
     g_assert_false(inv.classic_confinement);
     /* derived later */
     g_assert_false(inv.is_normal_mode);
@@ -103,13 +106,54 @@ static void test_sc_invocation_bad_instance_name(void) {
 
     if (g_test_subprocess()) {
         sc_invocation inv SC_CLEANUP(sc_cleanup_invocation) = {0};
-        sc_init_invocation(&inv, args, "foo_bar_bar_bar");
+        sc_init_invocation(&inv, args, "foo_bar_bar_bar", NULL);
         return;
     }
 
     g_test_trap_subprocess(NULL, 0, 0);
     g_test_trap_assert_failed();
     g_test_trap_assert_stderr("snap instance name can contain only one underscore\n");
+}
+
+static void test_sc_invocation_component(void) {
+    struct sc_args *args SC_CLEANUP(sc_cleanup_args) = test_prepare_args("core22", "snap.foo+comp.hook.install");
+
+    sc_invocation inv SC_CLEANUP(sc_cleanup_invocation);
+
+    sc_init_invocation(&inv, args, "foo", "foo+comp");
+
+    g_assert_cmpstr(inv.base_snap_name, ==, "core22");
+    g_assert_cmpstr(inv.executable, ==, "/usr/lib/snapd/snap-exec");
+    g_assert_cmpstr(inv.orig_base_snap_name, ==, "core22");
+    g_assert_cmpstr(inv.rootfs_dir, ==, SNAP_MOUNT_DIR "/core22/current");
+    g_assert_cmpstr(inv.security_tag, ==, "snap.foo+comp.hook.install");
+    g_assert_cmpstr(inv.snap_instance, ==, "foo");
+    g_assert_cmpstr(inv.snap_name, ==, "foo");
+    g_assert_cmpstr(inv.snap_component, ==, "foo+comp");
+    g_assert_false(inv.classic_confinement);
+    /* derived later */
+    g_assert_false(inv.is_normal_mode);
+}
+
+static void test_sc_invocation_component_instance_key(void) {
+    struct sc_args *args SC_CLEANUP(sc_cleanup_args) =
+        test_prepare_args("core22", "snap.foo_instance+comp.hook.install");
+
+    sc_invocation inv SC_CLEANUP(sc_cleanup_invocation);
+
+    sc_init_invocation(&inv, args, "foo_instance", "foo+comp");
+
+    g_assert_cmpstr(inv.base_snap_name, ==, "core22");
+    g_assert_cmpstr(inv.executable, ==, "/usr/lib/snapd/snap-exec");
+    g_assert_cmpstr(inv.orig_base_snap_name, ==, "core22");
+    g_assert_cmpstr(inv.rootfs_dir, ==, SNAP_MOUNT_DIR "/core22/current");
+    g_assert_cmpstr(inv.security_tag, ==, "snap.foo_instance+comp.hook.install");
+    g_assert_cmpstr(inv.snap_instance, ==, "foo_instance");
+    g_assert_cmpstr(inv.snap_name, ==, "foo");
+    g_assert_cmpstr(inv.snap_component, ==, "foo+comp");
+    g_assert_false(inv.classic_confinement);
+    /* derived later */
+    g_assert_false(inv.is_normal_mode);
 }
 
 static void test_sc_invocation_classic(void) {
@@ -125,7 +169,7 @@ static void test_sc_invocation_classic(void) {
     g_assert_nonnull(args);
 
     sc_invocation inv SC_CLEANUP(sc_cleanup_invocation) = {0};
-    sc_init_invocation(&inv, args, "foo-classic");
+    sc_init_invocation(&inv, args, "foo-classic", NULL);
 
     g_assert_cmpstr(inv.base_snap_name, ==, "core");
     g_assert_cmpstr(inv.executable, ==, "/usr/lib/snapd/snap-exec");
@@ -134,6 +178,7 @@ static void test_sc_invocation_classic(void) {
     g_assert_cmpstr(inv.security_tag, ==, "snap.foo-classic.app");
     g_assert_cmpstr(inv.snap_instance, ==, "foo-classic");
     g_assert_cmpstr(inv.snap_name, ==, "foo-classic");
+    g_assert_cmpstr(inv.snap_component, ==, NULL);
     g_assert_true(inv.classic_confinement);
 }
 
@@ -143,7 +188,7 @@ static void test_sc_invocation_tag_name_mismatch(void) {
     if (g_test_subprocess()) {
         sc_invocation inv SC_CLEANUP(sc_cleanup_invocation);
         ;
-        sc_init_invocation(&inv, args, "foo-not-foo");
+        sc_init_invocation(&inv, args, "foo-not-foo", NULL);
         return;
     }
 
@@ -159,4 +204,6 @@ static void __attribute__((constructor)) init(void) {
     g_test_add_func("/invocation/classic", test_sc_invocation_classic);
     g_test_add_func("/invocation/instance_key", test_sc_invocation_instance_key);
     g_test_add_func("/invocation/tag_name_mismatch", test_sc_invocation_tag_name_mismatch);
+    g_test_add_func("/invocation/component", test_sc_invocation_component);
+    g_test_add_func("/invocation/component_instance_key", test_sc_invocation_component_instance_key);
 }
