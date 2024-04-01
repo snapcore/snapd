@@ -25,6 +25,3 @@ RequiresMountsFor=/var/cache/apparmor /var/lib/snapd/apparmor/profiles
 Type=oneshot
 ExecStart=@libexecdir@/snapd/snapd-apparmor start
 RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
