@@ -21,13 +21,13 @@ package strace_test
 
 import (
 	"os"
-	"os/user"
 	"path/filepath"
 	"testing"
 
 	. "gopkg.in/check.v1"
 
 	"github.com/snapcore/snapd/dirs"
+	"github.com/snapcore/snapd/osutil/user"
 	"github.com/snapcore/snapd/osutil/strace"
 	"github.com/snapcore/snapd/testutil"
 )

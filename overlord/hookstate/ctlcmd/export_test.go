@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 
 /*
- * Copyright (C) 2016 Canonical Ltd
+ * Copyright (C) 2016, 2024 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -22,7 +22,6 @@ package ctlcmd
 import (
 	"context"
 	"fmt"
-	"os/user"
 
 	"github.com/snapcore/snapd/asserts"
 	"github.com/snapcore/snapd/client/clientutil"

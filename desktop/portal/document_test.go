@@ -22,13 +22,13 @@ package portal_test
 import (
 	"errors"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sync"
 
 	"github.com/godbus/dbus"
 	. "gopkg.in/check.v1"
 
+	"github.com/snapcore/snapd/osutil/user"
 	"github.com/snapcore/snapd/desktop/portal"
 	"github.com/snapcore/snapd/testutil"
 )

@@ -21,7 +21,6 @@ package autostart_test
 
 import (
 	"os"
-	"os/user"
 	"path"
 	"path/filepath"
 	"strings"
@@ -33,6 +32,7 @@ import (
 	"github.com/snapcore/snapd/snap"
 	"github.com/snapcore/snapd/snap/snaptest"
 	"github.com/snapcore/snapd/testutil"
+	"github.com/snapcore/snapd/osutil/user"
 	"github.com/snapcore/snapd/usersession/autostart"
 )
 
