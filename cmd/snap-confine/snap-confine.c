@@ -41,6 +41,7 @@
 #include "../libsnap-confine-private/feature.h"
 #include "../libsnap-confine-private/infofile.h"
 #include "../libsnap-confine-private/locking.h"
+#include "../libsnap-confine-private/privs.h"
 #include "../libsnap-confine-private/secure-getenv.h"
 #include "../libsnap-confine-private/snap.h"
 #include "../libsnap-confine-private/string-utils.h"
@@ -321,6 +322,7 @@ static void enter_non_classic_execution_environment(sc_invocation * inv,
 int main(int argc, char **argv)
 {
 	log_startup_stage("snap-confine enter");
+	sc_debug_capabilities("caps at startup");
 	// Use our super-defensive parser to figure out what we've been asked to do.
 	sc_error *err = NULL;
 	struct sc_args *args SC_CLEANUP(sc_cleanup_args) = NULL;
@@ -330,11 +332,6 @@ int main(int argc, char **argv)
 	};
 	args = sc_nonfatal_parse_args(&argc, &argv, &err);
 	sc_die_on_error(err);
-
-	// Remember certain properties of the process that are clobbered by
-	// snap-confine during execution. Those are restored just before calling
-	// execv.
-	sc_preserve_and_sanitize_process_state(&proc_state);
 
 	// We've been asked to print the version string so let's just do that.
 	if (sc_args_is_version_query(args)) {
@@ -371,6 +368,93 @@ int main(int argc, char **argv)
 		die("need to run as root or suid");
 	}
 
+	struct sc_apparmor apparmor;
+	sc_init_apparmor_support(&apparmor);
+	if (!apparmor.is_confined && apparmor.mode != SC_AA_NOT_APPLICABLE
+	    && real_uid != 0) {
+		// Refuse to run when this process is running unconfined on a system
+		// that supports AppArmor when the effective uid is root and the real
+		// id is non-root.  This protects against, for example, unprivileged
+		// users trying to leverage the snap-confine in the core snap to
+		// escalate privileges.
+		errno = 0; // errno is insignificant here
+		die("snap-confine has elevated permissions and is not confined"
+		    " but should be. Refusing to continue to avoid"
+		    " permission escalation attacks\n"
+		    "Please make sure that the snapd.apparmor service is enabled and started.");
+	}
+
+	/* Check if snap-confine was invoked by an ordinary user; if so, we want to
+	 * drop the root privileges ASAP.  Before doing that, however, we must
+	 * setup the capabilities that we want to retain.
+	 */
+	bool use_capabilities = real_uid != 0;
+
+	sc_debug_capabilities("initial caps");
+
+	static const sc_cap_mask snap_confine_caps =
+		SC_CAP_TO_MASK(CAP_DAC_OVERRIDE) |
+		SC_CAP_TO_MASK(CAP_DAC_READ_SEARCH) |
+		SC_CAP_TO_MASK(CAP_SYS_ADMIN) |
+		SC_CAP_TO_MASK(CAP_SYS_CHROOT) |
+		SC_CAP_TO_MASK(CAP_CHOWN) |
+		SC_CAP_TO_MASK(CAP_FOWNER) | // to create tmp dir with sticky bit
+		SC_CAP_TO_MASK(CAP_SYS_PTRACE); // to inspect the mount namespace of PID1
+
+	/* Since we are invoking snap-update-ns, we must also retain the
+	 * capabilities required by it. Make sure that this list is kept in sync
+	 * with the capabilities used in bootstrap.c in snap-update-ns code.
+	 */
+	static const sc_cap_mask snap_update_ns_caps =
+		SC_CAP_TO_MASK(CAP_DAC_OVERRIDE) |  // needed for the lock file
+		SC_CAP_TO_MASK(CAP_SYS_ADMIN) |
+		SC_CAP_TO_MASK(CAP_CHOWN) |
+		SC_CAP_TO_MASK(CAP_SETUID) |
+		SC_CAP_TO_MASK(CAP_SETGID);
+
+	if (use_capabilities) {
+		/* Don't lose the permitted capabilities when switching user.
+		 * Note that there's no need to undo this operation later, since this
+		 * flag is automatically cleared on execve(). */
+		sc_set_keep_caps_flag();
+
+		// Permanently drop if not root
+		debug("Dropping into user %d - %d", real_uid, real_gid);
+		// Note that we do not call setgroups() here because its ok
+		// that the user keeps the groups he already belongs to
+		if (setgid(real_gid) != 0)
+			die("setgid failed");
+		if (setuid(real_uid) != 0)
+			die("setuid failed");
+
+		if (real_gid != 0 && (getuid() == 0 || geteuid() == 0))
+			die("permanently dropping privs did not work");
+		if (real_uid != 0 && (getgid() == 0 || getegid() == 0))
+			die("permanently dropping privs did not work");
+
+		/* Capability setup:
+		 * 1. Restore those capabilities that we really need into the
+		 *    "effective" set.
+		 * 2. Capabilities needed by either us or by any of our child processes
+		 *    need to be set into the "permitted" set.
+		 * 3. Capabilities needed by our helper child processes need to be set
+		 *    into the "permitted", "inheritable" and "ambient" sets.
+		 *
+		 * Before executing the snap application we'll drop all capabilities.
+		 */
+		sc_capabilities caps;
+		caps.effective = snap_confine_caps;
+		caps.permitted = snap_confine_caps | snap_update_ns_caps;
+		caps.inheritable = snap_update_ns_caps;
+		sc_set_capabilities(&caps);
+		sc_set_ambient_capabilities(snap_update_ns_caps);
+	}
+
+	// Remember certain properties of the process that are clobbered by
+	// snap-confine during execution. Those are restored just before calling
+	// execv.
+	sc_preserve_and_sanitize_process_state(&proc_state);
+
 	char *snap_context SC_CLEANUP(sc_cleanup_string) = NULL;
 	// Do no get snap context value if running a hook (we don't want to overwrite hook's SNAP_COOKIE)
 	if (!sc_is_hook_security_tag(invocation.security_tag)) {
@@ -389,7 +473,7 @@ int main(int argc, char **argv)
 	struct sc_apparmor apparmor;
 	sc_init_apparmor_support(&apparmor);
 	if (!apparmor.is_confined && apparmor.mode != SC_AA_NOT_APPLICABLE
-	    && getuid() != 0 && geteuid() == 0) {
+	    && real_uid != 0) {
 		// Refuse to run when this process is running unconfined on a system
 		// that supports AppArmor when the effective uid is root and the real
 		// id is non-root.  This protects against, for example, unprivileged
@@ -449,16 +533,18 @@ int main(int argc, char **argv)
 
 	log_startup_stage("snap-confine mount namespace finish");
 
-	// Temporarily drop privileges back to the calling user until we can
-	// permanently drop (which we can't do just yet due to seccomp, see
-	// below).
-	sc_identity real_user_identity = {
-		.uid = real_uid,
-		.gid = real_gid,
-		.change_uid = 1,
-		.change_gid = 1,
-	};
-	sc_set_effective_identity(real_user_identity);
+	// Temporarily drop all capabilities, since we don't need any for a while.
+	if (use_capabilities) {
+		debug("dropping caps");
+		sc_capabilities caps;
+		caps.effective = 0;
+		// Don't alter permitted and inheritable capabilities, use the same
+		// values as before.
+		caps.permitted = snap_confine_caps | snap_update_ns_caps;
+		caps.inheritable = snap_update_ns_caps;
+		sc_set_capabilities(&caps);
+	}
+
 	// Ensure that the user data path exists. When creating it use the identity
 	// of the calling user (by using real user and group identifiers). This
 	// allows the creation of directories inside ~/ on NFS with root_squash
@@ -478,63 +564,19 @@ int main(int argc, char **argv)
 		// for compatibility, if facing older snapd.
 		setenv("SNAP_CONTEXT", snap_context, 1);
 	}
-	// Normally setuid/setgid not only permanently drops the UID/GID, but
-	// also clears the capabilities bounding sets (see "Effect of user ID
-	// changes on capabilities" in 'man capabilities'). To load a seccomp
+	// To load a seccomp
 	// profile, we need either CAP_SYS_ADMIN or PR_SET_NO_NEW_PRIVS. Since
 	// NNP causes issues with AppArmor and exec transitions in certain
 	// snapd interfaces, keep CAP_SYS_ADMIN temporarily when we are
 	// permanently dropping privileges.
-	if (getresuid(&real_uid, &effective_uid, &saved_uid) != 0) {
-		die("getresuid failed");
-	}
-	debug("ruid: %d, euid: %d, suid: %d",
-	      real_uid, effective_uid, saved_uid);
-	struct __user_cap_header_struct hdr =
-	    { _LINUX_CAPABILITY_VERSION_3, 0 };
-	struct __user_cap_data_struct cap_data[2] = { {0} };
-
-	// At this point in time, if we are going to permanently drop our
-	// effective_uid will not be '0' but our saved_uid will be '0'. Detect
-	// and save when we are in the this state so know when to setup the
-	// capabilities bounding set, regain CAP_SYS_ADMIN and later drop it.
-	bool keep_sys_admin = effective_uid != 0 && saved_uid == 0;
-	if (keep_sys_admin) {
+	if (use_capabilities) {
 		debug("setting capabilities bounding set");
-		// clear all 32 bit caps but SYS_ADMIN, with none inheritable
-		cap_data[0].effective = CAP_TO_MASK(CAP_SYS_ADMIN);
-		cap_data[0].permitted = cap_data[0].effective;
-		cap_data[0].inheritable = 0;
-		// clear all 64 bit caps
-		cap_data[1].effective = 0;
-		cap_data[1].permitted = 0;
-		cap_data[1].inheritable = 0;
-		if (capset(&hdr, cap_data) != 0) {
-			die("capset failed");
-		}
-	}
-	// Permanently drop if not root
-	if (effective_uid == 0) {
-		// Note that we do not call setgroups() here because its ok
-		// that the user keeps the groups he already belongs to
-		if (setgid(real_gid) != 0)
-			die("setgid failed");
-		if (setuid(real_uid) != 0)
-			die("setuid failed");
-
-		if (real_gid != 0 && (getuid() == 0 || geteuid() == 0))
-			die("permanently dropping privs did not work");
-		if (real_uid != 0 && (getgid() == 0 || getegid() == 0))
-			die("permanently dropping privs did not work");
-	}
-	// Now that we've permanently dropped, regain SYS_ADMIN
-	if (keep_sys_admin) {
-		debug("regaining SYS_ADMIN");
-		cap_data[0].effective = CAP_TO_MASK(CAP_SYS_ADMIN);
-		cap_data[0].permitted = cap_data[0].effective;
-		if (capset(&hdr, cap_data) != 0) {
-			die("capset regain failed");
-		}
+		// clear all caps but SYS_ADMIN, with none inheritable
+		sc_capabilities caps;
+		caps.effective = SC_CAP_TO_MASK(CAP_SYS_ADMIN);
+		caps.permitted = caps.effective;
+		caps.inheritable = 0;
+		sc_set_capabilities(&caps);
 	}
 	// Now that we've dropped and regained SYS_ADMIN, we can load the
 	// seccomp profiles.
@@ -543,15 +585,10 @@ int main(int argc, char **argv)
 		// global profile as well.
 		sc_apply_global_seccomp_profile();
 	}
-	// Even though we set inheritable to 0, let's clear SYS_ADMIN
-	// explicitly
-	if (keep_sys_admin) {
-		debug("clearing SYS_ADMIN");
-		cap_data[0].effective = 0;
-		cap_data[0].permitted = cap_data[0].effective;
-		if (capset(&hdr, cap_data) != 0) {
-			die("capset clear failed");
-		}
+	if (use_capabilities) {
+		debug("dropping all capabilities");
+		sc_capabilities caps = { 0 };
+		sc_set_capabilities(&caps);
 	}
 	// and exec the new executable
 	argv[0] = (char *)invocation.executable;
@@ -782,6 +819,7 @@ static void enter_non_classic_execution_environment(sc_invocation *inv,
 	   join. We need to construct a new mount namespace ourselves.
 	   To capture it we will need a helper process so make one. */
 	sc_fork_helper(group, aa);
+	sc_debug_capabilities("caps on join");
 	int retval = sc_join_preserved_ns(group, aa, inv, snap_discard_ns_fd);
 	if (retval == ESRCH) {
 		/* Create and populate the mount namespace. This performs all
@@ -846,7 +884,15 @@ static void enter_non_classic_execution_environment(sc_invocation *inv,
 	// starting the snap application has already ensure that the process has
 	// been put in a dedicated group.
 	if (!sc_cgroup_is_v2()) {
-		sc_cgroup_freezer_join(inv->snap_instance, getpid());
+		// Temporarily raise egid so we can chown the freezer cgroup
+		// under LXD, if we are executed as non-root
+		if (real_uid != 0) {
+			sc_identity old = sc_set_effective_identity(sc_root_group_identity());
+			sc_cgroup_freezer_join(inv->snap_instance, getpid());
+			(void)sc_set_effective_identity(old);
+		} else {
+			sc_cgroup_freezer_join(inv->snap_instance, getpid());
+		}
 	}
 
 	sc_unlock(snap_lock_fd);
