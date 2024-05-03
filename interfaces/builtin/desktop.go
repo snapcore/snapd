@@ -456,6 +456,18 @@ dbus (send)
 /etc/xdg/user-dirs.conf r,
 /etc/xdg/user-dirs.defaults r,
 /run/udev/tags/seat{,/**} r,
+
+# KDE Plasma specific extension
+
+# Used by the KCrash handler
+@{PROC}/sys/kernel/core_pattern r,
+
+# So that KSplash disappears when appropriate
+dbus (send)
+    bus=session
+    path=/KSplash
+    interface=org.kde.KSplash
+    member=setStage,
 `
 
 type desktopInterface struct {
