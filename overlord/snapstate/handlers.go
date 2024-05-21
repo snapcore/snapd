@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 
 /*
- * Copyright (C) 2016-2022 Canonical Ltd
+ * Copyright (C) 2016-2023 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -343,7 +343,7 @@ func (m *SnapManager) installOneBaseOrRequired(t *state.Task, snapName string, c
 	}
 
 	// not installed, nor queued for install -> install it
-	ts, err := InstallWithDeviceContext(context.TODO(), st, snapName, &RevisionOptions{Channel: channel}, userID, Flags{RequireTypeBase: requireTypeBase}, nil, deviceCtx, "")
+	ts, err := InstallWithDeviceContext(context.TODO(), st, snapName, &RevisionOptions{Channel: channel}, userID, Flags{RequireTypeBase: requireTypeBase, ImplicitlyInstalled: true}, nil, deviceCtx, "")
 
 	// something might have triggered an explicit install while
 	// the state was unlocked -> deal with that here by simply
@@ -2148,6 +2148,9 @@ func (m *SnapManager) doLinkSnap(t *state.Task, _ *tomb.Tomb) (err error) {
 	}
 	// keep instance key
 	snapst.InstanceKey = snapsup.InstanceKey
+
+	// propagate!
+	snapst.ImplicitlyInstalled = snapsup.ImplicitlyInstalled
 
 	// don't keep the old state because, if we fail, we may or may not be able to
 	// revert the migration. We set the migration status after undoing any
