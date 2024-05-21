@@ -31,7 +31,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	_ "golang.org/x/crypto/sha3"
+	_ "github.com/snapcore/snapd/internal/sha3"
 	"gopkg.in/tomb.v2"
 
 	"github.com/snapcore/snapd/asserts"

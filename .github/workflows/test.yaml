@@ -29,6 +29,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
+    - name: Somehow snapcraft is failing to install this
+      run: |
+          sudo snap install --classic --channel=1.21-fips/stable go
+
     - name: Build snapd snap
       uses: snapcore/action-build@v1
       with:
@@ -106,11 +110,12 @@ jobs:
 
     strategy:
       # we cache successful runs so it's fine to keep going
-      fail-fast: false      
+      fail-fast: false
       matrix:
         gochannel:
           - 1.18
           - latest/stable
+          - 1.21-fips/stable
 
     steps:
     - name: Checkout code
