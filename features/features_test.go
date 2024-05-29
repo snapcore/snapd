@@ -107,7 +107,7 @@ func (*featureSuite) TestIsExported(c *C) {
 	check(features.QuotaGroups, false)
 	check(features.RefreshAppAwarenessUX, true)
 	check(features.AspectsConfiguration, true)
-	check(features.AppArmorPrompting, false)
+	check(features.AppArmorPrompting, true)
 
 	c.Check(tested, Equals, features.NumberOfFeatures())
 }
@@ -189,11 +189,8 @@ func (*featureSuite) TestAppArmorPromptingSupportedCallback(c *C) {
 	kernelFeatures = &[]string{"foo", "bar", "policy:permstable32:prompt"}
 	parserFeatures = &[]string{"baz", "qux", "prompt"}
 	supported, reason = callback()
-	//c.Check(supported, Equals, true)
-	//c.Check(reason, Equals, "")
-	// TODO: change once prompting is fully supported
-	c.Check(supported, Equals, false)
-	c.Check(reason, Equals, "requires newer version of snapd")
+	c.Check(supported, Equals, true)
+	c.Check(reason, Equals, "")
 
 	// Parser error
 	parserError = fmt.Errorf("bad parser")

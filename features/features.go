@@ -147,6 +147,8 @@ var featuresExported = map[SnapdFeature]bool{
 
 	RefreshAppAwarenessUX: true,
 	AspectsConfiguration:  true,
+
+	AppArmorPrompting: true,
 }
 
 // featuresSupportedCallbacks maps features to a callback function which may be
@@ -186,8 +188,7 @@ var featuresSupportedCallbacks = map[SnapdFeature]func() (bool, string){
 		if !strutil.ListContains(parserFeatures, "prompt") {
 			return false, "apparmor parser does not support the prompt qualifier"
 		}
-		return false, "requires newer version of snapd"
-		// TODO: return true once snapd supports prompting
+		return true, ""
 	},
 }
 
