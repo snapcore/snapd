@@ -21,32 +21,56 @@ concurrency:
 
 jobs:
   snap-builds:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     # only build the snap for pull requests, it's not needed on release branches
     # or on master since we have launchpad build recipes which do this already
     if: ${{ github.event_name == 'pull_request' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
 
     - name: Build snapd snap
       uses: snapcore/action-build@v1
       with:
         snapcraft-channel: 8.x/stable
 
+    - name: Set test version
+      run: |
+        sudo apt install -y devscripts
+        dch --newversion "1337.$(dpkg-parsechangelog --show-field Version)" "testing build"
+        sg lxd -c 'snapcraft clean snapd'
+
+    - name: Build test snapd snap
+      uses: snapcore/action-build@v1
+      with:
+        snapcraft-channel: 8.x/stable
+
     - name: Check built artifact
       run: |
-        unsquashfs snapd*.snap meta/snap.yaml usr/lib/snapd/
-        if cat squashfs-root/meta/snap.yaml | grep -q "version:.*dirty.*"; then
-          echo "PR produces dirty snapd snap version"
-          cat squashfs-root/usr/lib/snapd/dirty-git-tree-info.txt
-          exit 1
-        elif cat squashfs-root/usr/lib/snapd/info | grep -q "VERSION=.*dirty.*"; then
-          echo "PR produces dirty internal snapd info version"
-          cat squashfs-root/usr/lib/snapd/info
-          cat squashfs-root/usr/lib/snapd/dirty-git-tree-info.txt
-          exit 1
-        fi
+        for snap in snapd*.snap; do
+          case "${snap}" in
+            snapd_1337.*.snap)
+              # Skip test build
+              ;;
+            *)
+              echo "Checking ${snap}"
+              rm -rf squashfs-root
+              unsquashfs "${snap}" meta/snap.yaml usr/lib/snapd/
+              if cat squashfs-root/meta/snap.yaml | grep -q "version:.*dirty.*"; then
+                echo "PR produces dirty snapd snap version"
+                cat squashfs-root/usr/lib/snapd/dirty-git-tree-info.txt
+                exit 1
+              elif cat squashfs-root/usr/lib/snapd/info | grep -q "VERSION=.*dirty.*"; then
+                echo "PR produces dirty internal snapd info version"
+                cat squashfs-root/usr/lib/snapd/info
+                cat squashfs-root/usr/lib/snapd/dirty-git-tree-info.txt
+                exit 1
+              fi
+              ;;
+          esac
+        done
 
     - name: Uploading snapd snap artifact
       uses: actions/upload-artifact@v3
@@ -572,7 +596,7 @@ jobs:
         verbose: true
 
   spread:
-    needs: [unit-tests]
+    needs: [unit-tests, snap-builds]
     # have spread jobs run on master on PRs only, but on both PRs and pushes to
     # release branches
     if: ${{ github.event_name != 'push' || github.ref != 'refs/heads/master' }}
@@ -697,6 +721,19 @@ jobs:
               fi
           fi
 
+    - name: Download built snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snap-files
+        pattern: snapd_1337.*.snap
+        path: "${{ github.workspace }}/built-snap"
+
+    - name: Rename imported snap
+      run: |
+        for snap in built-snap/snapd_1337.*.snap; do
+          mv "${snap}" "${snap}.keep"
+        done
+
     - name: Run spread tests
       if: "!contains(github.event.pull_request.labels.*.name, 'Skip spread')"
       env:
@@ -796,7 +833,7 @@ jobs:
         key: "${{ github.job }}-results-${{ github.run_id }}-${{ matrix.group }}-${{ github.run_attempt }}"
 
   spread-nested:
-    needs: [unit-tests]
+    needs: [unit-tests, snap-builds]
     # have spread jobs run on master on PRs only, but on both PRs and pushes to
     # release branches
     if: ${{ github.event_name != 'push' || github.ref != 'refs/heads/master' }}
@@ -874,6 +911,19 @@ jobs:
           echo "labels=$LABELS" >> $GITHUB_OUTPUT
           echo "Collected labels: $LABELS"
       shell: bash
+
+    - name: Download built snap
+      uses: actions/download-artifact@v3
+      with:
+        name: snap-files
+        pattern: snapd_1337.*.snap
+        path: "${{ github.workspace }}/built-snap"
+
+    - name: Rename imported snap
+      run: |
+        for snap in built-snap/snapd_1337.*.snap; do
+          mv "${snap}" "${snap}.keep"
+        done
 
     - name: Run spread tests
       # run if there is a 'Run nested' label set on the PR or the commit is pushed to one of the recognised release branches
