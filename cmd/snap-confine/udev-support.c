@@ -124,23 +124,24 @@ static void sc_udev_allow_nvidia(sc_device_cgroup *cgroup)
  **/
 static void sc_udev_allow_hybris(sc_device_cgroup *cgroup)
 {
-	struct stat sbuf;
+	/* Only go on here if this has been identified as a Halium/libhybris system
+	 *
+	 * In case the host happens to have binder available, but isn't identified as
+	 * a system requiring it to drive host-residing Android drivers, then return early,
+	 * otherwise we would open a hole between confined apps and unconfined Anbox or other
+	 * which causes them to communicate over a potentially unmediated IPC interface.
+	 */
+	struct stat propbuf;
+	if (stat("/system/build.prop", &propbuf) != 0) {
+		return;
+	}
 
-	if (stat("/dev/binderfs/binder", &sbuf) == 0) {
-		sc_device_cgroup_allow(cgroup, S_IFCHR, major(sbuf.st_rdev),
-				       minor(sbuf.st_rdev));
-	}
-	if (stat("/dev/binderfs/hwbinder", &sbuf) == 0) {
-		sc_device_cgroup_allow(cgroup, S_IFCHR, major(sbuf.st_rdev),
-				       minor(sbuf.st_rdev));
-	}
-	if (stat("/dev/binder", &sbuf) == 0) {
-		sc_device_cgroup_allow(cgroup, S_IFCHR, major(sbuf.st_rdev),
-				       minor(sbuf.st_rdev));
-	}
-	if (stat("/dev/hwbinder", &sbuf) == 0) {
-		sc_device_cgroup_allow(cgroup, S_IFCHR, major(sbuf.st_rdev),
-				       minor(sbuf.st_rdev));
+	const char *paths[] = {"/dev/binderfs/binder", "/dev/binderfs/hwbinder", "/dev/binder", "/dev/hwbinder"};
+	for (int i = 0; i < sizeof(paths)/sizeof(paths[0]); i++) {
+		struct stat sbuf;
+		if (stat(paths[i], &sbuf) == 0) {
+			sc_device_cgroup_allow(cgroup, S_IFCHR, major(sbuf.st_rdev), minor(sbuf.st_rdev));
+		}
 	}
 }
 
