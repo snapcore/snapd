@@ -427,8 +427,22 @@ func (w *Writer) SetOptionsSnaps(optSnaps []*OptionsSnap) error {
 			if err != nil {
 				return fmt.Errorf("cannot use option channel for snap %q: %v", whichSnap, err)
 			}
-			if err := w.policy.checkSnapChannel(ch, whichSnap); err != nil {
+
+			// Check whether the channel defined in the model assertion
+			// is same as the option snap(--snap=SNAP_NAME=CHANNEL)
+			modSnaps, err := w.modSnaps()
+			if err != nil {
 				return err
+			}
+			for _, modSnap := range modSnaps {
+				if sn.Name != modSnap.Name {
+					continue
+				}
+				if sn.Channel != modSnap.DefaultChannel {
+					if err := w.policy.checkSnapChannel(ch, whichSnap); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		if local {
