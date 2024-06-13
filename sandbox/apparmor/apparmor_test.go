@@ -100,7 +100,7 @@ func (*apparmorSuite) TestAppArmorInternalAppArmorParser(c *C) {
 		p,
 		"--config-file", filepath.Join(d, "/apparmor/parser.conf"),
 		"--base", filepath.Join(d, "/apparmor.d"),
-		"--policy-features", filepath.Join(d, "/apparmor.d/abi/3.0"),
+		"--policy-features", filepath.Join(d, "/apparmor.d/abi/4.0"),
 	})
 	c.Check(internal, Equals, true)
 }
@@ -332,6 +332,8 @@ func (s *apparmorSuite) TestProbeAppArmorParserFeatures(c *C) {
 			expectedCalls = append(expectedCalls, []string{"apparmor_parser", "--preprocess"})
 			contents += fmt.Sprintf("%d ", code)
 		}
+		// the parser version is probed and logged in probeParserFeatures()
+		expectedCalls = append(expectedCalls, []string{"apparmor_parser", "--version"})
 		// probeParserFeatures() sorts the features
 		sort.Strings(expFeatures)
 		err := os.WriteFile(filepath.Join(d, "codes"), []byte(contents), 0755)
@@ -390,6 +392,7 @@ profile snap-test flags=(unconfined) {
 profile snap-test {
  prompt /foo r,
 }
+
 `)
 	}
 
