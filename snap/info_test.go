@@ -1769,6 +1769,9 @@ func (s *infoSuite) TestComponentFromSnapComponentInstance(c *C) {
 		{"snap_instance", "snap_instance", ""},
 		{"snap+component", "snap", "component"},
 		{"snap_instance+component", "snap_instance", "component"},
+		{"", "", ""},
+		// We allow empty snap in some cases (snapctl)
+		{"+comp1", "", "comp1"},
 	}
 
 	for _, t := range tests {
