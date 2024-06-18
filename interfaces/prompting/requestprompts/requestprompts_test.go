@@ -214,7 +214,7 @@ func (s *requestpromptsSuite) TestAddOrMerge(c *C) {
 	listenerReq3 := &listener.Request{}
 
 	stored := pdb.Prompts(metadata.User)
-	c.Assert(stored, HasLen, 0)
+	c.Assert(stored, IsNil)
 
 	before := time.Now()
 	prompt1, merged := pdb.AddOrMerge(metadata, path, permissions, listenerReq1)
@@ -684,7 +684,7 @@ func (s *requestpromptsSuite) TestHandleNewRuleNonMatches(c *C) {
 
 	satisfied, err := pdb.HandleNewRule(metadata, constraints, badOutcome)
 	c.Check(err, ErrorMatches, `internal error: invalid outcome.*`)
-	c.Check(satisfied, HasLen, 0)
+	c.Check(satisfied, IsNil)
 
 	s.checkNewNoticesSimple(c, []string{}, nil)
 
@@ -695,7 +695,7 @@ func (s *requestpromptsSuite) TestHandleNewRuleNonMatches(c *C) {
 	}
 	satisfied, err = pdb.HandleNewRule(otherUserMetadata, constraints, outcome)
 	c.Check(err, IsNil)
-	c.Check(satisfied, HasLen, 0)
+	c.Check(satisfied, IsNil)
 
 	s.checkNewNoticesSimple(c, []string{}, nil)
 
@@ -706,7 +706,7 @@ func (s *requestpromptsSuite) TestHandleNewRuleNonMatches(c *C) {
 	}
 	satisfied, err = pdb.HandleNewRule(otherSnapMetadata, constraints, outcome)
 	c.Check(err, IsNil)
-	c.Check(satisfied, HasLen, 0)
+	c.Check(satisfied, IsNil)
 
 	s.checkNewNoticesSimple(c, []string{}, nil)
 
@@ -717,19 +717,19 @@ func (s *requestpromptsSuite) TestHandleNewRuleNonMatches(c *C) {
 	}
 	satisfied, err = pdb.HandleNewRule(otherInterfaceMetadata, constraints, outcome)
 	c.Check(err, IsNil)
-	c.Check(satisfied, HasLen, 0)
+	c.Check(satisfied, IsNil)
 
 	s.checkNewNoticesSimple(c, []string{}, nil)
 
 	satisfied, err = pdb.HandleNewRule(metadata, otherConstraints, outcome)
 	c.Check(err, IsNil)
-	c.Check(satisfied, HasLen, 0)
+	c.Check(satisfied, IsNil)
 
 	s.checkNewNoticesSimple(c, []string{}, nil)
 
 	satisfied, err = pdb.HandleNewRule(metadata, badConstraints, outcome)
 	c.Check(err, ErrorMatches, "syntax error in pattern")
-	c.Check(satisfied, HasLen, 0)
+	c.Check(satisfied, IsNil)
 
 	s.checkNewNoticesSimple(c, []string{}, nil)
 
@@ -748,7 +748,7 @@ func (s *requestpromptsSuite) TestHandleNewRuleNonMatches(c *C) {
 	c.Check(allowed, Equals, true)
 
 	stored = pdb.Prompts(metadata.User)
-	c.Check(stored, HasLen, 0)
+	c.Check(stored, IsNil)
 }
 
 func (s *requestpromptsSuite) TestClose(c *C) {
