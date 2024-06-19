@@ -27,6 +27,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	. "gopkg.in/check.v1"
 
@@ -95,101 +96,134 @@ func (s *requestpromptsSuite) TestNew(c *C) {
 		c.Fatalf("unexpected notice with userID %d and ID %s", userID, promptID)
 		return nil
 	}
-	pdb := requestprompts.New(notifyPrompt)
+	pdb, err := requestprompts.New(notifyPrompt)
+	c.Assert(err, IsNil)
 	c.Check(pdb.PerUser(), HasLen, 0)
-	c.Check(pdb.MaxID(), Equals, uint64(0))
+	c.Check(pdb.NextID(), Equals, "0000000000000001")
 }
 
-func (s *requestpromptsSuite) TestLoadMaxID(c *C) {
+func (s *requestpromptsSuite) TestNewValidMaxID(c *C) {
 	notifyPrompt := func(userID uint32, promptID string, data map[string]string) error {
 		c.Fatalf("unexpected notice with userID %d and ID %s", userID, promptID)
 		return nil
 	}
 	for _, testCase := range []struct {
-		fileContents []byte
-		initialMaxID uint64
+		initial uint64
+		nextID  string
 	}{
 		{
-			[]byte("0000000000000000"),
 			0,
+			"0000000000000001",
 		},
 		{
-			[]byte("0000000000000001"),
 			1,
+			"0000000000000002",
 		},
 		{
-			[]byte("1000000000000001"),
 			0x1000000000000001,
+			"1000000000000002",
 		},
 		{
-			[]byte("1234"),
-			0,
+			0x0123456789ABCDEF,
+			"0123456789ABCDF0",
 		},
 		{
-			[]byte("deadbeefdeadbeef"),
-			0xdeadbeefdeadbeef,
-		},
-		{
-			[]byte("deadbeef"),
-			0,
-		},
-		{
-			[]byte("foo"),
-			0,
-		},
-		{
-			[]byte("foobarbazqux1234"),
-			0,
+			0xDEADBEEFDEADBEEF,
+			"DEADBEEFDEADBEF0",
 		},
 	} {
-		osutil.AtomicWriteFile(s.maxIDPath, testCase.fileContents, 0600, 0)
-		pdb := requestprompts.New(notifyPrompt)
-		c.Check(pdb.MaxID(), Equals, testCase.initialMaxID)
+		var initialData [8]byte
+		*(*uint64)(unsafe.Pointer(&initialData[0])) = testCase.initial
+		osutil.AtomicWriteFile(s.maxIDPath, initialData[:], 0600, 0)
+		pdb, err := requestprompts.New(notifyPrompt)
+		c.Assert(err, IsNil)
+		s.checkWrittenMaxID(c, testCase.initial)
+		c.Check(pdb.NextID(), Equals, testCase.nextID)
+		s.checkWrittenMaxID(c, testCase.initial+1)
 	}
 }
 
-func (s *requestpromptsSuite) TestLoadMaxIDNextID(c *C) {
+func (s *requestpromptsSuite) TestNewInvalidMaxID(c *C) {
+	notifyPrompt := func(userID uint32, promptID string, data map[string]string) error {
+		c.Fatalf("unexpected notice with userID %d and ID %s", userID, promptID)
+		return nil
+	}
+
+	// First try with no existing max ID file
+	pdb, err := requestprompts.New(notifyPrompt)
+	c.Assert(err, IsNil)
+	s.checkWrittenMaxID(c, 0)
+	c.Check(pdb.NextID(), Equals, "0000000000000001")
+	s.checkWrittenMaxID(c, 1)
+
+	// Now try with various invalid max ID files
+	for _, initial := range [][]byte{
+		[]byte(""),
+		[]byte("foo"),
+		[]byte("1234"),
+		[]byte("1234567"),
+		[]byte("123456789"),
+	} {
+		osutil.AtomicWriteFile(s.maxIDPath, initial, 0600, 0)
+		pdb, err := requestprompts.New(notifyPrompt)
+		c.Assert(err, IsNil)
+		s.checkWrittenMaxID(c, 0)
+		c.Check(pdb.NextID(), Equals, "0000000000000001")
+		s.checkWrittenMaxID(c, 1)
+	}
+}
+
+func (s *requestpromptsSuite) TestNewNextIDUniqueIDs(c *C) {
 	restore := requestprompts.MockSendReply(func(listenerReq *listener.Request, reply interface{}) error {
 		c.Fatalf("should not have called sendReply")
 		return nil
 	})
 	defer restore()
 
-	var prevMaxID uint64 = 42
-	maxIDStr := fmt.Sprintf("%016X", prevMaxID)
-	osutil.AtomicWriteFile(s.maxIDPath, []byte(maxIDStr), 0600, 0)
+	var initialMaxID uint64 = 42
+	var initialData [8]byte
+	*(*uint64)(unsafe.Pointer(&initialData[0])) = initialMaxID
+	osutil.AtomicWriteFile(s.maxIDPath, initialData[:], 0600, 0)
 
-	pdb1 := requestprompts.New(s.defaultNotifyPrompt)
-	c.Check(pdb1.PerUser(), HasLen, 0)
-	c.Check(pdb1.MaxID(), Equals, prevMaxID)
-
-	metadata := &prompting.Metadata{
-		User:      s.defaultUser,
-		Snap:      "nextcloud",
-		Interface: "home",
-	}
-	path := "/home/test/Documents/foo.txt"
-	permissions := []string{"read", "write", "execute"}
-
-	listenerReq := &listener.Request{}
-	prompt, merged := pdb1.AddOrMerge(metadata, path, permissions, listenerReq)
-	c.Assert(merged, Equals, false)
-	s.checkWrittenMaxID(c, prompt.ID)
-
-	expectedID := prevMaxID + 1
+	pdb1, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
+	expectedID := initialMaxID + 1
 	expectedIDStr := fmt.Sprintf("%016X", expectedID)
-	s.checkWrittenMaxID(c, expectedIDStr)
+	c.Check(pdb1.NextID(), Equals, expectedIDStr)
+	s.checkWrittenMaxID(c, expectedID)
 
-	pdb2 := requestprompts.New(s.defaultNotifyPrompt)
-	// New prompt DB should not have existing prompts, but should start from previous max ID
-	c.Check(pdb2.PerUser(), HasLen, 0)
-	c.Check(pdb1.MaxID(), Equals, prevMaxID+1)
+	// New prompt DB should start where existing one left off
+	pdb2, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
+	expectedID++
+	expectedIDStr = fmt.Sprintf("%016X", expectedID)
+	c.Check(pdb2.NextID(), Equals, expectedIDStr)
+
+	// Both prompt DBs should be aware of any new IDs created by any others
+	expectedID++
+	expectedIDStr = fmt.Sprintf("%016X", expectedID)
+	c.Check(pdb1.NextID(), Equals, expectedIDStr)
+
+	expectedID++
+	expectedIDStr = fmt.Sprintf("%016X", expectedID)
+	c.Check(pdb1.NextID(), Equals, expectedIDStr)
+
+	expectedID++
+	expectedIDStr = fmt.Sprintf("%016X", expectedID)
+	c.Check(pdb2.NextID(), Equals, expectedIDStr)
+
+	// For the checks above to have passed, incremented IDs must have been
+	// written to disk, but check now anyway. Theoretically, checking disk
+	// earlier might have caused mmaped data to be flushed, so wait until now.
+	s.checkWrittenMaxID(c, expectedID)
 }
 
-func (s *requestpromptsSuite) checkWrittenMaxID(c *C, id string) {
+func (s *requestpromptsSuite) checkWrittenMaxID(c *C, id uint64) {
 	data, err := os.ReadFile(s.maxIDPath)
 	c.Assert(err, IsNil)
-	c.Assert(string(data), Equals, id)
+	c.Assert(data, HasLen, 8)
+	writtenID := *(*uint64)(unsafe.Pointer(&data[0]))
+	c.Assert(writtenID, Equals, id)
 }
 
 func (s *requestpromptsSuite) TestAddOrMerge(c *C) {
@@ -199,7 +233,8 @@ func (s *requestpromptsSuite) TestAddOrMerge(c *C) {
 	})
 	defer restore()
 
-	pdb := requestprompts.New(s.defaultNotifyPrompt)
+	pdb, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
 
 	metadata := &prompting.Metadata{
 		User:      s.defaultUser,
@@ -221,9 +256,10 @@ func (s *requestpromptsSuite) TestAddOrMerge(c *C) {
 	after := time.Now()
 	c.Assert(merged, Equals, false)
 
+	expectedID := uint64(1)
+
 	s.checkNewNoticesSimple(c, []string{prompt1.ID}, nil)
-	c.Check(pdb.MaxID(), Equals, uint64(1))
-	s.checkWrittenMaxID(c, prompt1.ID)
+	s.checkWrittenMaxID(c, expectedID)
 
 	prompt2, merged := pdb.AddOrMerge(metadata, path, permissions, listenerReq2)
 	c.Assert(merged, Equals, true)
@@ -232,8 +268,7 @@ func (s *requestpromptsSuite) TestAddOrMerge(c *C) {
 	// Merged prompts should re-record notice
 	s.checkNewNoticesSimple(c, []string{prompt1.ID}, nil)
 	// Merged prompts should not advance the max ID
-	c.Check(pdb.MaxID(), Equals, uint64(1))
-	s.checkWrittenMaxID(c, prompt1.ID)
+	s.checkWrittenMaxID(c, expectedID)
 
 	c.Check(prompt1.Timestamp.After(before), Equals, true)
 	c.Check(prompt1.Timestamp.Before(after), Equals, true)
@@ -261,8 +296,7 @@ func (s *requestpromptsSuite) TestAddOrMerge(c *C) {
 	// Merged prompts should re-record notice
 	s.checkNewNoticesSimple(c, []string{prompt1.ID}, nil)
 	// Merged prompts should not advance the max ID
-	c.Check(pdb.MaxID(), Equals, uint64(1))
-	s.checkWrittenMaxID(c, prompt1.ID)
+	s.checkWrittenMaxID(c, expectedID)
 }
 
 func (s *requestpromptsSuite) checkNewNoticesSimple(c *C, expectedPromptIDs []string, expectedData map[string]string) {
@@ -303,7 +337,8 @@ func (s *requestpromptsSuite) TestPromptWithIDErrors(c *C) {
 	})
 	defer restore()
 
-	pdb := requestprompts.New(s.defaultNotifyPrompt)
+	pdb, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
 
 	metadata := &prompting.Metadata{
 		User:      s.defaultUser,
@@ -346,7 +381,8 @@ func (s *requestpromptsSuite) TestReply(c *C) {
 	})
 	defer restore()
 
-	pdb := requestprompts.New(s.defaultNotifyPrompt)
+	pdb, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
 
 	metadata := &prompting.Metadata{
 		User:      s.defaultUser,
@@ -412,7 +448,8 @@ func (s *requestpromptsSuite) TestReplyErrors(c *C) {
 	})
 	defer restore()
 
-	pdb := requestprompts.New(s.defaultNotifyPrompt)
+	pdb, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
 
 	metadata := &prompting.Metadata{
 		User:      s.defaultUser,
@@ -431,7 +468,7 @@ func (s *requestpromptsSuite) TestReplyErrors(c *C) {
 
 	outcome := prompting.OutcomeAllow
 
-	_, err := pdb.Reply(metadata.User, "foo", outcome)
+	_, err = pdb.Reply(metadata.User, "foo", outcome)
 	c.Check(err, Equals, requestprompts.ErrNotFound)
 
 	_, err = pdb.Reply(metadata.User+1, "foo", outcome)
@@ -457,7 +494,8 @@ func (s *requestpromptsSuite) TestHandleNewRuleAllowPermissions(c *C) {
 	})
 	defer restore()
 
-	pdb := requestprompts.New(s.defaultNotifyPrompt)
+	pdb, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
 
 	metadata := &prompting.Metadata{
 		User:      s.defaultUser,
@@ -560,7 +598,8 @@ func (s *requestpromptsSuite) TestHandleNewRuleDenyPermissions(c *C) {
 	})
 	defer restore()
 
-	pdb := requestprompts.New(s.defaultNotifyPrompt)
+	pdb, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
 
 	metadata := &prompting.Metadata{
 		User:      s.defaultUser,
@@ -638,7 +677,8 @@ func (s *requestpromptsSuite) TestHandleNewRuleNonMatches(c *C) {
 	})
 	defer restore()
 
-	pdb := requestprompts.New(s.defaultNotifyPrompt)
+	pdb, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
 
 	user := s.defaultUser
 	snap := "nextcloud"
@@ -758,7 +798,8 @@ func (s *requestpromptsSuite) TestClose(c *C) {
 	})
 	defer restore()
 
-	pdb := requestprompts.New(s.defaultNotifyPrompt)
+	pdb, err := requestprompts.New(s.defaultNotifyPrompt)
+	c.Assert(err, IsNil)
 
 	metadata := &prompting.Metadata{
 		User:      s.defaultUser,
@@ -785,7 +826,7 @@ func (s *requestpromptsSuite) TestClose(c *C) {
 	for _, prompt := range prompts {
 		expectedPromptIDs = append(expectedPromptIDs, prompt.ID)
 	}
-	c.Check(pdb.MaxID(), Equals, uint64(3))
+	c.Check(prompts[2].ID, Equals, fmt.Sprintf("%016X", 3))
 
 	// One notice for each prompt when created
 	s.checkNewNoticesSimple(c, expectedPromptIDs, nil)
