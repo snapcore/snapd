@@ -187,7 +187,7 @@ func validateSnapAndCompsNames(names []string, ctxSnap string) ([]string, error)
 		snap, comp := snap.SplitSnapComponentInstanceName(name)
 		// if snap is present it must be the context snap for the moment
 		if snap != "" && snap != ctxSnap {
-			return nil, fmt.Errorf("cannot install snaps using snapctl yet")
+			return nil, fmt.Errorf("cannot install snaps using snapctl")
 		}
 		if err := naming.ValidateSnap(comp); err != nil {
 			return nil, err
@@ -254,7 +254,7 @@ func runSnapManagementCommand(context *hookstate.Context, cmd *managementCommand
 		st.Lock()
 		defer st.Unlock()
 		return chg.Err()
-	case <-time.After(configstate.ConfigureHookTimeout()):
+	case <-time.After(10 * time.Minute):
 		return fmt.Errorf("snapctl %s command is taking too long", cmdStr)
 	}
 }

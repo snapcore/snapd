@@ -172,9 +172,10 @@ func (s *installSuite) testEphemeralMngmtCommand(c *C, cmd string) {
 	s.mockContext, err = hookstate.NewContext(nil, s.st, setup, s.mockHandler, "")
 	c.Assert(err, IsNil)
 
+	chann := make(chan error)
 	go func() {
 		_, _, err := ctlcmd.Run(s.mockContext, []string{cmd, "test-snap+comp1", "+comp2"}, 0)
-		c.Check(err, IsNil)
+		chann <- err
 	}()
 
 	// Wait for the change to be created and assigned to task
@@ -195,6 +196,9 @@ func (s *installSuite) testEphemeralMngmtCommand(c *C, cmd string) {
 	s.st.Lock()
 	chg.SetStatus(state.DoneStatus)
 	s.st.Unlock()
+
+	err = <-chann
+	c.Assert(err, IsNil)
 }
 
 func (s *installSuite) TestEphemeralInstallCommand(c *C) {
@@ -207,7 +211,7 @@ func (s *installSuite) TestEphemeralRemoveCommand(c *C) {
 
 func (s *installSuite) testMgmntCommandOtherSnap(c *C, cmd string) {
 	_, _, err := ctlcmd.Run(s.mockContext, []string{cmd, "+comp1", "other-snap+comp2"}, 0)
-	c.Assert(err, ErrorMatches, "cannot install snaps using snapctl yet")
+	c.Assert(err, ErrorMatches, "cannot install snaps using snapctl")
 }
 
 func (s *installSuite) TestInstallCommandOtherSnap(c *C) {
