@@ -4,14 +4,15 @@ package user
 
 import (
 	"bufio"
+	"bytes"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
 	origUser "os/user"
-
-	"github.com/snapcore/snapd/release"
 )
 
 type User = origUser.User
@@ -19,33 +20,28 @@ type Group = origUser.Group
 type UnknownUserError = origUser.UnknownUserError
 type UnknownGroupError = origUser.UnknownGroupError
 
-func classicCurrent() (*User, error) {
-	return origUser.Current()
-}
+func getEnt(database string) ([]byte, error) {
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 
-func classicLookup(username string) (*User, error) {
-	return origUser.Lookup(username)
-}
+	cmd := exec.Command("getent", database)
+	cmd.Stdin = nil
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
 
-func classicLookupId(uid string) (*User, error) {
-	return origUser.LookupId(uid)
-}
-
-func classicLookupGroup(groupname string) (*Group, error) {
-	return origUser.LookupGroup(groupname)
-}
-
-func lookupExtraGroup(index int, expectedValue string) (*Group, error) {
-	f, err := os.Open("/var/lib/extrausers/group")
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		} else {
-			return nil, err
-		}
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("getent %s returned an error: %q", database, errBuf.Bytes())
 	}
-	defer f.Close()
-	rd := bufio.NewReader(f)
+
+	return outBuf.Bytes(), nil
+}
+
+func lookupGroup(index int, expectedValue string) (*Group, error) {
+	buf, err := getEnt("group")
+	if err != nil {
+		return nil, err
+	}
+	rd := bufio.NewReader(bytes.NewReader(buf))
 	for {
 		var line []byte
 		for {
@@ -82,17 +78,12 @@ func lookupExtraGroup(index int, expectedValue string) (*Group, error) {
 	return nil, nil
 }
 
-func lookupExtraUser(index int, expectedValue string) (*User, error) {
-	f, err := os.Open("/var/lib/extrausers/passwd")
+func lookupUser(index int, expectedValue string) (*User, error) {
+	buf, err := getEnt("passwd")
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
-	defer f.Close()
-	rd := bufio.NewReader(f)
+	rd := bufio.NewReader(bytes.NewReader(buf))
 	for {
 		var line []byte
 		for {
@@ -132,78 +123,18 @@ func lookupExtraUser(index int, expectedValue string) (*User, error) {
 	return nil, nil
 }
 
-func coreCurrent() (*User, error) {
-	foundExtraUser, err := lookupExtraUser(2, strconv.Itoa(os.Getuid()))
-	if err != nil {
-		return nil, err
-	}
-	if foundExtraUser != nil {
-		return foundExtraUser, nil
-	}
-	return origUser.Current()
-}
-
-func coreLookup(username string) (*User, error) {
-	foundExtraUser, err := lookupExtraUser(0, username)
-	if err != nil {
-		return nil, err
-	}
-	if foundExtraUser != nil {
-		return foundExtraUser, nil
-	}
-	return origUser.Lookup(username)
-}
-
-func coreLookupId(uid string) (*User, error) {
-	foundExtraUser, err := lookupExtraUser(2, uid)
-	if err != nil {
-		return nil, err
-	}
-	if foundExtraUser != nil {
-		return foundExtraUser, nil
-	}
-	return origUser.LookupId(uid)
-}
-
-func coreLookupGroup(groupname string) (*Group, error) {
-	foundExtraGroup, err := lookupExtraGroup(0, groupname)
-	if err != nil {
-		return nil, err
-	}
-	if foundExtraGroup != nil {
-		return foundExtraGroup, nil
-	}
-	return origUser.LookupGroup(groupname)
-}
-
 func Current() (*User, error) {
-	if release.OnClassic {
-		return classicCurrent()
-	} else {
-		return coreCurrent()
-	}
+	return lookupUser(2, strconv.Itoa(os.Getuid()))
 }
 
 func Lookup(username string) (*User, error) {
-	if release.OnClassic {
-		return classicLookup(username)
-	} else {
-		return coreLookup(username)
-	}
+	return lookupUser(0, username)
 }
 
 func LookupId(uid string) (*User, error) {
-	if release.OnClassic {
-		return classicLookupId(uid)
-	} else {
-		return coreLookupId(uid)
-	}
+	return lookupUser(2, uid)
 }
 
 func LookupGroup(groupname string) (*Group, error) {
-	if release.OnClassic {
-		return classicLookupGroup(groupname)
-	} else {
-		return coreLookupGroup(groupname)
-	}
+	return lookupGroup(0, groupname)
 }
