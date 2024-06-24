@@ -21,14 +21,19 @@ package ctlcmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/snapcore/snapd/asserts"
 	"github.com/snapcore/snapd/i18n"
 	"github.com/snapcore/snapd/interfaces"
+	"github.com/snapcore/snapd/overlord/assertstate"
 	"github.com/snapcore/snapd/overlord/configstate"
 	"github.com/snapcore/snapd/overlord/configstate/config"
 	"github.com/snapcore/snapd/overlord/hookstate"
+	"github.com/snapcore/snapd/overlord/ifacestate/ifacerepo"
+	"github.com/snapcore/snapd/overlord/registrystate"
 	"github.com/snapcore/snapd/overlord/state"
 )
 
@@ -103,9 +108,15 @@ func (c *getCommand) printValues(getByKey func(string) (interface{}, bool, error
 		}
 	}
 
+	return c.printPatch(patch)
+}
+
+func (c *getCommand) printPatch(patch interface{}) error {
 	var confToPrint interface{} = patch
 	if !c.Document && len(c.Positional.Keys) == 1 {
-		confToPrint = patch[c.Positional.Keys[0]]
+		if confMap, ok := patch.(map[string]interface{}); ok {
+			confToPrint = confMap[c.Positional.Keys[0]]
+		}
 	}
 
 	if c.Typed && confToPrint == nil {
@@ -160,6 +171,14 @@ func (c *getCommand) Execute(args []string) error {
 		}
 
 		return c.getInterfaceSetting(context, name)
+	} else if strings.Contains(c.Positional.PlugOrSlotSpec, "/") {
+		parts := strings.Split(c.Positional.PlugOrSlotSpec, "/")
+		if err := validateRegistryViewID(parts); err != nil {
+			return err
+		}
+
+		account, registryName, viewName := parts[0], parts[1], parts[2]
+		return c.getRegistryView(context, account, registryName, viewName)
 	}
 
 	// PlugOrSlotSpec is actually a configuration key.
@@ -337,4 +356,93 @@ func (c *getCommand) getInterfaceSetting(context *hookstate.Context, plugOrSlot 
 		}
 		return nil, false, err
 	})
+}
+
+func (c *getCommand) getRegistryView(ctx *hookstate.Context, account, registryName, viewName string) error {
+	ctx.Lock()
+	defer ctx.Unlock()
+
+	registryView := registryName + "/" + viewName
+	if ok, err := hasConnectedRegistryPlug(ctx, account, registryView); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf(i18n.G("cannot get %s/%s: cannot find connected plug for %s"), account, registryView, ctx.InstanceName())
+	}
+
+	registryAssert, err := assertstate.Registry(ctx.State(), account, registryName)
+	if err != nil {
+		if errors.Is(err, &asserts.NotFoundError{}) {
+			return fmt.Errorf(i18n.G("cannot get %s/%s: registry not found"), account, registryView)
+		}
+		return err
+	}
+	reg := registryAssert.Registry()
+
+	view := reg.View(viewName)
+	if view == nil {
+		return fmt.Errorf(i18n.G("cannot get %s/%s: view not found"), account, registryView)
+	}
+
+	tx, err := registrystate.RegistryTransaction(ctx, reg)
+	if err != nil {
+		return err
+	}
+
+	res, err := registrystate.GetViaViewInTx(tx, view, c.Positional.Keys)
+	if err != nil {
+		return err
+	}
+
+	return c.printPatch(res)
+}
+
+func hasConnectedRegistryPlug(ctx *hookstate.Context, account, registryView string) (bool, error) {
+	repo := ifacerepo.Get(ctx.State())
+	plugs := repo.Plugs(ctx.InstanceName())
+
+	for _, plug := range plugs {
+		if plug.Interface != "registry" {
+			continue
+		}
+
+		var plugAcc string
+		if err := plug.Attr("account", &plugAcc); err != nil {
+			// even if it's not present, that's unexpected
+			return false, err
+		}
+
+		if plugAcc != account {
+			continue
+		}
+
+		var plugView string
+		if err := plug.Attr("view", &plugView); err != nil {
+			// even if it's not present, that's unexpected
+			return false, err
+		}
+
+		if plugView != registryView {
+			continue
+		}
+
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func validateRegistryViewID(parts []string) error {
+	fmtErr := fmt.Errorf(i18n.G("registry identifier must conform to format: <account-id>/<registry>/<view>"))
+
+	if len(parts) != 3 {
+		return fmtErr
+	}
+
+	for _, part := range parts {
+		if part == "" {
+			return fmtErr
+		}
+	}
+
+	return nil
 }

@@ -29,9 +29,12 @@ import (
 	"github.com/snapcore/snapd/overlord"
 	"github.com/snapcore/snapd/overlord/assertstate"
 	"github.com/snapcore/snapd/overlord/assertstate/assertstatetest"
+	"github.com/snapcore/snapd/overlord/hookstate"
+	"github.com/snapcore/snapd/overlord/hookstate/hooktest"
 	"github.com/snapcore/snapd/overlord/registrystate"
 	"github.com/snapcore/snapd/overlord/state"
 	"github.com/snapcore/snapd/registry"
+	"github.com/snapcore/snapd/snap"
 )
 
 type registryTestSuite struct {
@@ -290,4 +293,34 @@ func (s *registryTestSuite) TestRegistrystateGetEntireView(c *C) {
 			"b": float64(2),
 		},
 	})
+}
+
+func (s *registryTestSuite) TestRegistryTransaction(c *C) {
+	reg, err := registry.New("acc", "foo", map[string]interface{}{
+		"bar": map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{"request": "foo", "storage": "foo"},
+			},
+		},
+	}, registry.NewJSONSchema())
+	c.Assert(err, IsNil)
+
+	s.state.Lock()
+	task := s.state.NewTask("test-task", "my test task")
+	setup := &hookstate.HookSetup{Snap: "test-snap", Revision: snap.R(1), Hook: "test-hook"}
+	s.state.Unlock()
+
+	mockHandler := hooktest.NewMockHandler()
+	ctx, err := hookstate.NewContext(task, task.State(), setup, mockHandler, "")
+	c.Assert(err, IsNil)
+
+	ctx.Lock()
+	defer ctx.Unlock()
+
+	tx, err := registrystate.RegistryTransaction(ctx, reg)
+	c.Assert(err, IsNil)
+
+	sameTx, err := registrystate.RegistryTransaction(ctx, reg)
+	c.Assert(err, IsNil)
+	c.Assert(tx, Equals, sameTx)
 }

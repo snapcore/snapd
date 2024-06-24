@@ -20,18 +20,28 @@
 package ctlcmd_test
 
 import (
+	"fmt"
 	"strings"
 
 	. "gopkg.in/check.v1"
 
+	"github.com/snapcore/snapd/asserts"
+	"github.com/snapcore/snapd/asserts/assertstest"
+	"github.com/snapcore/snapd/dirs"
 	"github.com/snapcore/snapd/interfaces"
+	"github.com/snapcore/snapd/interfaces/ifacetest"
+	"github.com/snapcore/snapd/overlord/assertstate"
+	"github.com/snapcore/snapd/overlord/assertstate/assertstatetest"
 	"github.com/snapcore/snapd/overlord/configstate"
 	"github.com/snapcore/snapd/overlord/configstate/config"
 	"github.com/snapcore/snapd/overlord/hookstate"
 	"github.com/snapcore/snapd/overlord/hookstate/ctlcmd"
 	"github.com/snapcore/snapd/overlord/hookstate/hooktest"
+	"github.com/snapcore/snapd/overlord/ifacestate/ifacerepo"
+	"github.com/snapcore/snapd/overlord/registrystate"
 	"github.com/snapcore/snapd/overlord/state"
 	"github.com/snapcore/snapd/snap"
+	"github.com/snapcore/snapd/testutil"
 )
 
 type getSuite struct {
@@ -434,5 +444,299 @@ func (s *getAttrSuite) TestSlotHookTests(c *C) {
 			c.Check(string(stderr), Equals, "")
 			c.Check(string(stdout), Equals, test.stdout)
 		}
+	}
+}
+
+type registrySuite struct {
+	testutil.BaseTest
+
+	state    *state.State
+	devAccID string
+
+	mockContext *hookstate.Context
+	mockHandler *hooktest.MockHandler
+}
+
+var _ = Suite(&registrySuite{})
+
+func (s *registrySuite) SetUpTest(c *C) {
+	s.BaseTest.SetUpTest(c)
+	dirs.SetRootDir(c.MkDir())
+	s.AddCleanup(func() {
+		dirs.SetRootDir("/")
+	})
+
+	s.mockHandler = hooktest.NewMockHandler()
+
+	s.state = state.New(nil)
+	s.state.Lock()
+	defer s.state.Unlock()
+
+	task := s.state.NewTask("test-task", "my test task")
+	setup := &hookstate.HookSetup{Snap: "test-snap", Revision: snap.R(1), Hook: "test-hook"}
+
+	var err error
+	s.mockContext, err = hookstate.NewContext(task, s.state, setup, s.mockHandler, "")
+	c.Assert(err, IsNil)
+
+	storeSigning := assertstest.NewStoreStack("can0nical", nil)
+	db, err := asserts.OpenDatabase(&asserts.DatabaseConfig{
+		Backstore: asserts.NewMemoryBackstore(),
+		Trusted:   storeSigning.Trusted,
+	})
+	c.Assert(err, IsNil)
+	c.Assert(db.Add(storeSigning.StoreAccountKey("")), IsNil)
+	assertstate.ReplaceDB(s.state, db)
+
+	// add developer1's account and account-key assertions
+	devAcc := assertstest.NewAccount(storeSigning, "developer1", nil, "")
+	c.Assert(storeSigning.Add(devAcc), IsNil)
+
+	devPrivKey, _ := assertstest.GenerateKey(752)
+	devAccKey := assertstest.NewAccountKey(storeSigning, devAcc, nil, devPrivKey.PublicKey(), "")
+	s.devAccID = devAccKey.AccountID()
+
+	assertstatetest.AddMany(s.state, storeSigning.StoreAccountKey(""), devAcc, devAccKey)
+
+	signingDB := assertstest.NewSigningDB("developer1", devPrivKey)
+	c.Check(signingDB, NotNil)
+	c.Assert(storeSigning.Add(devAccKey), IsNil)
+
+	headers := map[string]interface{}{
+		"authority-id": devAccKey.AccountID(),
+		"account-id":   devAccKey.AccountID(),
+		"name":         "network",
+		"views": map[string]interface{}{
+			"read-wifi": map[string]interface{}{
+				"rules": []interface{}{
+					map[string]interface{}{"request": "ssid", "storage": "wifi.ssid", "access": "read"},
+					map[string]interface{}{"request": "password", "storage": "wifi.psk", "access": "read"},
+				},
+			},
+			"write-wifi": map[string]interface{}{
+				"rules": []interface{}{
+					map[string]interface{}{"request": "ssid", "storage": "wifi.ssid", "access": "write"},
+					map[string]interface{}{"request": "password", "storage": "wifi.psk", "access": "write"},
+				},
+			},
+		},
+		"timestamp": "2030-11-06T09:16:26Z",
+	}
+
+	body := []byte(`{
+  "storage": {
+    "schema": {
+      "wifi": "any"
+    }
+  }
+}`)
+
+	as, err := signingDB.Sign(asserts.RegistryType, headers, body, "")
+	c.Assert(err, IsNil)
+	c.Assert(assertstate.Add(s.state, as), IsNil)
+
+	repo := interfaces.NewRepository()
+	ifacerepo.Replace(s.state, repo)
+
+	regIface := &ifacetest.TestInterface{InterfaceName: "registry"}
+	err = repo.AddInterface(regIface)
+	c.Assert(err, IsNil)
+
+	snapYaml := fmt.Sprintf(`name: test-snap
+type: app
+version: 1
+plugs:
+  read-wifi:
+    interface: registry
+    account: %[1]s
+    view: network/read-wifi
+  assert-missing-view:
+    interface: registry
+    account: %[1]s
+    view: network/foo
+  assert-missing-registry:
+    interface: registry
+    account: %[1]s
+    view: foo/read-wifi
+`, s.devAccID)
+	info := mockInstalledSnap(c, s.state, snapYaml, "")
+
+	appSet, err := interfaces.NewSnapAppSet(info, nil)
+	c.Assert(err, IsNil)
+	err = repo.AddAppSet(appSet)
+	c.Assert(err, IsNil)
+
+	const coreYaml = `name: core
+version: 1.0
+type: os
+slots:
+ registry-slot:
+  interface: registry
+`
+	info = mockInstalledSnap(c, s.state, coreYaml, "")
+
+	coreSet, err := interfaces.NewSnapAppSet(info, nil)
+	c.Assert(err, IsNil)
+
+	err = repo.AddAppSet(coreSet)
+	c.Assert(err, IsNil)
+
+	for _, plug := range []string{"read-wifi", "assert-missing-view", "assert-missing-registry"} {
+		ref := &interfaces.ConnRef{
+			PlugRef: interfaces.PlugRef{Snap: "test-snap", Name: plug},
+			SlotRef: interfaces.SlotRef{Snap: "core", Name: "registry-slot"},
+		}
+
+		_, err = repo.Connect(ref, nil, nil, nil, nil, nil)
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *registrySuite) TestRegistryGetSingleView(c *C) {
+	s.state.Lock()
+	err := registrystate.SetViaView(s.state, s.devAccID, "network", "write-wifi", map[string]interface{}{
+		"ssid": "my-ssid",
+	})
+	s.state.Unlock()
+	c.Assert(err, IsNil)
+
+	stdout, stderr, err := ctlcmd.Run(s.mockContext, []string{"get", fmt.Sprintf("%s/network/read-wifi", s.devAccID), "ssid"}, 0)
+	c.Assert(err, IsNil)
+	c.Check(string(stdout), Equals, "my-ssid\n")
+	c.Check(stderr, IsNil)
+}
+
+func (s *registrySuite) TestRegistryGetManyViews(c *C) {
+	s.state.Lock()
+	err := registrystate.SetViaView(s.state, s.devAccID, "network", "write-wifi", map[string]interface{}{
+		"ssid":     "my-ssid",
+		"password": "secret",
+	})
+	s.state.Unlock()
+	c.Assert(err, IsNil)
+
+	stdout, stderr, err := ctlcmd.Run(s.mockContext, []string{"get", fmt.Sprintf("%s/network/read-wifi", s.devAccID), "ssid", "password"}, 0)
+	c.Assert(err, IsNil)
+	c.Check(string(stdout), Equals, `{
+	"password": "secret",
+	"ssid": "my-ssid"
+}
+`)
+	c.Check(stderr, IsNil)
+}
+
+func (s *registrySuite) TestRegistryGetNoRequest(c *C) {
+	s.state.Lock()
+	err := registrystate.SetViaView(s.state, s.devAccID, "network", "write-wifi", map[string]interface{}{
+		"ssid":     "my-ssid",
+		"password": "secret",
+	})
+	s.state.Unlock()
+	c.Assert(err, IsNil)
+
+	stdout, stderr, err := ctlcmd.Run(s.mockContext, []string{"get", fmt.Sprintf("%s/network/read-wifi", s.devAccID)}, 0)
+	c.Assert(err, IsNil)
+	c.Check(string(stdout), Equals, `{
+	"password": "secret",
+	"ssid": "my-ssid"
+}
+`)
+	c.Check(stderr, IsNil)
+}
+
+func (s *registrySuite) TestRegistryGetHappensTransactionally(c *C) {
+	s.state.Lock()
+	err := registrystate.SetViaView(s.state, s.devAccID, "network", "write-wifi", map[string]interface{}{
+		"ssid": "my-ssid",
+	})
+	s.state.Unlock()
+	c.Assert(err, IsNil)
+
+	// registry transaction is created when snapctl runs for the first time
+	stdout, stderr, err := ctlcmd.Run(s.mockContext, []string{"get", fmt.Sprintf("%s/network/read-wifi", s.devAccID)}, 0)
+	c.Assert(err, IsNil)
+	c.Check(string(stdout), Equals, `{
+	"ssid": "my-ssid"
+}
+`)
+	c.Check(stderr, IsNil)
+
+	s.state.Lock()
+	err = registrystate.SetViaView(s.state, s.devAccID, "network", "write-wifi", map[string]interface{}{
+		"ssid": "other-ssid",
+	})
+	s.state.Unlock()
+	c.Assert(err, IsNil)
+
+	// the new write wasn't reflected because it didn't run in the same transaction
+	stdout, stderr, err = ctlcmd.Run(s.mockContext, []string{"get", fmt.Sprintf("%s/network/read-wifi", s.devAccID)}, 0)
+	c.Assert(err, IsNil)
+	c.Check(string(stdout), Equals, `{
+	"ssid": "my-ssid"
+}
+`)
+	c.Check(stderr, IsNil)
+
+	// make a new context so we get a new transaction
+	s.state.Lock()
+	task := s.state.NewTask("test-task", "my test task")
+	setup := &hookstate.HookSetup{Snap: "test-snap", Revision: snap.R(1), Hook: "test-hook"}
+	s.mockContext, err = hookstate.NewContext(task, s.state, setup, s.mockHandler, "")
+	s.state.Unlock()
+	c.Assert(err, IsNil)
+
+	// now we get the new data
+	stdout, stderr, err = ctlcmd.Run(s.mockContext, []string{"get", fmt.Sprintf("%s/network/read-wifi", s.devAccID)}, 0)
+	c.Assert(err, IsNil)
+	c.Check(string(stdout), Equals, `{
+	"ssid": "other-ssid"
+}
+`)
+	c.Check(stderr, IsNil)
+}
+
+func (s *registrySuite) TestRegistryGetNotFound(c *C) {
+	type testcase struct {
+		viewID string
+		err    string
+	}
+
+	tcs := []testcase{
+		{
+			// no values
+			viewID: fmt.Sprintf("%s/network/read-wifi", s.devAccID),
+			err:    `cannot get registry view .*: matching rules don't map to any values`,
+		},
+		{
+			// no connected plug
+			viewID: fmt.Sprintf("%s/network/other", s.devAccID),
+			err:    `cannot get .*: cannot find connected plug for test-snap`,
+		},
+		{
+			// no assertion for registry
+			viewID: fmt.Sprintf("%s/foo/read-wifi", s.devAccID),
+			err:    `cannot get .*: registry not found`,
+		},
+		{
+			// assertion registry doesn't include view
+			viewID: fmt.Sprintf("%s/network/foo", s.devAccID),
+			err:    `cannot get .*: view not found`,
+		},
+	}
+
+	for _, tc := range tcs {
+		stdout, stderr, err := ctlcmd.Run(s.mockContext, []string{"get", tc.viewID}, 0)
+		c.Assert(err, ErrorMatches, tc.err)
+		c.Check(stdout, IsNil)
+		c.Check(stderr, IsNil)
+	}
+}
+
+func (s *registrySuite) TestRegistryGetInvalidID(c *C) {
+	for _, id := range []string{"foo/bar", "foo//bar"} {
+		stdout, stderr, err := ctlcmd.Run(s.mockContext, []string{"get", id}, 0)
+		c.Assert(err, ErrorMatches, "registry identifier must conform to format: <account-id>/<registry>/<view>")
+		c.Check(stdout, IsNil)
+		c.Check(stderr, IsNil)
 	}
 }
