@@ -25,8 +25,8 @@ import (
 	"syscall"
 
 	"github.com/snapcore/snapd/dirs"
-	"github.com/snapcore/snapd/snap/naming"
 	"github.com/snapcore/snapd/osutil/user"
+	"github.com/snapcore/snapd/snap/naming"
 )
 
 var (
