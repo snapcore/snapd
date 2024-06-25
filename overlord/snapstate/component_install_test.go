@@ -79,14 +79,8 @@ func expectedComponentInstallTasks(opts int) []string {
 	return startTasks
 }
 
-func verifyComponentInstallTasks(c *C, opts int, ts *state.TaskSet) {
-	kinds := taskKinds(ts.Tasks())
-
-	expected := expectedComponentInstallTasks(opts)
-
-	c.Assert(kinds, DeepEquals, expected)
-
-	// Check presence of attributes
+func checkSetupTasks(c *C, ts *state.TaskSet) {
+	// Check presence of snap setup / component setup in the tasks
 	var firstTaskID string
 	var compSetup snapstate.ComponentSetup
 	var snapsup snapstate.SnapSetup
@@ -114,6 +108,15 @@ func verifyComponentInstallTasks(c *C, opts int, ts *state.TaskSet) {
 		c.Assert(csup, DeepEquals, &compSetup)
 		c.Assert(ssup, DeepEquals, &snapsup)
 	}
+}
+
+func verifyComponentInstallTasks(c *C, opts int, ts *state.TaskSet) {
+	kinds := taskKinds(ts.Tasks())
+
+	expected := expectedComponentInstallTasks(opts)
+	c.Assert(kinds, DeepEquals, expected)
+
+	checkSetupTasks(c, ts)
 }
 
 func createTestComponent(c *C, snapName, compName string, snapInfo *snap.Info) (*snap.ComponentInfo, string) {
