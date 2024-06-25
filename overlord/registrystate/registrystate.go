@@ -110,6 +110,8 @@ func GetViaView(st *state.State, account, registryName, viewName string, fields 
 	return GetViaViewInTx(tx, view, fields)
 }
 
+// GetViaViewInTx uses the view to get values for the fields from the databag
+// in the transaction.
 func GetViaViewInTx(tx *registry.Transaction, view *registry.View, fields []string) (interface{}, error) {
 	if len(fields) == 0 {
 		val, err := view.Get(tx, "")
