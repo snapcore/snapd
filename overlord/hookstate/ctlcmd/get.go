@@ -43,6 +43,7 @@ type getCommand struct {
 	// these two options are mutually exclusive
 	ForceSlotSide bool `long:"slot" description:"return attribute values from the slot side of the connection"`
 	ForcePlugSide bool `long:"plug" description:"return attribute values from the plug side of the connection"`
+	View          bool `long:"view" description:"return registry values from the view declared in the plug"`
 
 	Positional struct {
 		PlugOrSlotSpec string   `positional-args:"true" positional-arg-name:":<plug|slot>"`
@@ -166,19 +167,15 @@ func (c *getCommand) Execute(args []string) error {
 		if snap != "" {
 			return fmt.Errorf(`"snapctl get %s" not supported, use "snapctl get :%s" instead`, c.Positional.PlugOrSlotSpec, parts[1])
 		}
-		if len(c.Positional.Keys) == 0 {
+		// registry views can be read without fields
+		if !c.View && len(c.Positional.Keys) == 0 {
 			return fmt.Errorf(i18n.G("get which attribute?"))
 		}
 
-		return c.getInterfaceSetting(context, name)
-	} else if strings.Contains(c.Positional.PlugOrSlotSpec, "/") {
-		parts := strings.Split(c.Positional.PlugOrSlotSpec, "/")
-		if err := validateRegistryViewID(parts); err != nil {
-			return err
+		if c.View {
+			return c.getRegistryView(context, name)
 		}
-
-		account, registryName, viewName := parts[0], parts[1], parts[2]
-		return c.getRegistryView(context, account, registryName, viewName)
+		return c.getInterfaceSetting(context, name)
 	}
 
 	// PlugOrSlotSpec is actually a configuration key.
@@ -303,8 +300,7 @@ func (c *getCommand) getInterfaceSetting(context *hookstate.Context, plugOrSlot 
 		return fmt.Errorf(i18n.G("interface attributes can only be read during the execution of interface hooks"))
 	}
 
-	var attrsTask *state.Task
-	attrsTask, err = attributesTask(context)
+	attrsTask, err := attributesTask(context)
 	if err != nil {
 		return err
 	}
@@ -358,16 +354,38 @@ func (c *getCommand) getInterfaceSetting(context *hookstate.Context, plugOrSlot 
 	})
 }
 
-func (c *getCommand) getRegistryView(ctx *hookstate.Context, account, registryName, viewName string) error {
+func (c *getCommand) getRegistryView(ctx *hookstate.Context, plugName string) error {
+	if c.ForcePlugSide || c.ForceSlotSide {
+		return fmt.Errorf(i18n.G("cannot use --plug or --slot with --view"))
+	}
+
 	ctx.Lock()
 	defer ctx.Unlock()
+	repo := ifacerepo.Get(ctx.State())
 
-	registryView := registryName + "/" + viewName
-	if ok, err := hasConnectedRegistryPlug(ctx, account, registryView); err != nil {
-		return err
-	} else if !ok {
-		return fmt.Errorf(i18n.G("cannot get %s/%s: cannot find connected plug for %s"), account, registryView, ctx.InstanceName())
+	plug := repo.Plug(ctx.InstanceName(), plugName)
+	if plug == nil {
+		return fmt.Errorf(i18n.G("no plug :%s for snap %q"), plugName, ctx.InstanceName())
 	}
+
+	if plug.Interface != "registry" {
+		return fmt.Errorf(i18n.G("cannot use --view with non-registry plug :%s"), plugName)
+	}
+
+	var account string
+	if err := plug.Attr("account", &account); err != nil {
+		// should not be possible at this stage
+		return fmt.Errorf(i18n.G("internal error: cannot find \"account\" attribute in plug :%s: %w"), plugName, err)
+	}
+
+	var registryView string
+	if err := plug.Attr("view", &registryView); err != nil {
+		// should not be possible at this stage
+		return fmt.Errorf(i18n.G("internal error: cannot find \"view\" attribute in plug :%s: %w"), plugName, err)
+	}
+
+	parts := strings.Split(registryView, "/")
+	registryName, viewName := parts[0], parts[1]
 
 	registryAssert, err := assertstate.Registry(ctx.State(), account, registryName)
 	if err != nil {
@@ -394,55 +412,4 @@ func (c *getCommand) getRegistryView(ctx *hookstate.Context, account, registryNa
 	}
 
 	return c.printPatch(res)
-}
-
-func hasConnectedRegistryPlug(ctx *hookstate.Context, account, registryView string) (bool, error) {
-	repo := ifacerepo.Get(ctx.State())
-	plugs := repo.Plugs(ctx.InstanceName())
-
-	for _, plug := range plugs {
-		if plug.Interface != "registry" {
-			continue
-		}
-
-		var plugAcc string
-		if err := plug.Attr("account", &plugAcc); err != nil {
-			// even if it's not present, that's unexpected
-			return false, err
-		}
-
-		if plugAcc != account {
-			continue
-		}
-
-		var plugView string
-		if err := plug.Attr("view", &plugView); err != nil {
-			// even if it's not present, that's unexpected
-			return false, err
-		}
-
-		if plugView != registryView {
-			continue
-		}
-
-		return true, nil
-	}
-
-	return false, nil
-}
-
-func validateRegistryViewID(parts []string) error {
-	fmtErr := fmt.Errorf(i18n.G("registry identifier must conform to format: <account-id>/<registry>/<view>"))
-
-	if len(parts) != 3 {
-		return fmtErr
-	}
-
-	for _, part := range parts {
-		if part == "" {
-			return fmtErr
-		}
-	}
-
-	return nil
 }
