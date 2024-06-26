@@ -1242,10 +1242,6 @@ func (p *pathUpdateGoal) toUpdate(_ context.Context, st *state.State, opts Optio
 			return updatePlan{}, err
 		}
 
-		// TODO:COMPS: remove this once we are ready to handle components during
-		// refresh
-		t.components = nil
-
 		targets = append(targets, t)
 		names = append(names, sn.InstanceName)
 	}
@@ -1281,7 +1277,7 @@ func targetForPathSnap(update PathSnap, snapst SnapState, opts Options) (target,
 		return target{}, fmt.Errorf("cannot install local snap %q: %v != %v (revision mismatch)", update.InstanceName, update.RevOpts.Revision, si.Revision)
 	}
 
-	if update.RevOpts.Channel != "" && update.SideInfo.Channel != "" && update.RevOpts.Channel != update.SideInfo.Channel {
+	if update.RevOpts.Channel != "" && si.Channel != "" && update.RevOpts.Channel != si.Channel {
 		return target{}, fmt.Errorf("cannot install local snap %q: %v != %v (channel mismatch)", update.InstanceName, update.RevOpts.Channel, si.Channel)
 	}
 
@@ -1299,8 +1295,7 @@ func targetForPathSnap(update PathSnap, snapst SnapState, opts Options) (target,
 		update.RevOpts.Channel = update.SideInfo.Channel
 	}
 
-	channel, err := resolveChannel(update.InstanceName, trackingChannel, update.RevOpts.Channel, opts.DeviceCtx)
-	if err != nil {
+	if err := update.RevOpts.resolveChannel(update.InstanceName, trackingChannel, opts.DeviceCtx); err != nil {
 		return target{}, err
 	}
 
@@ -1312,7 +1307,7 @@ func targetForPathSnap(update PathSnap, snapst SnapState, opts Options) (target,
 	return target{
 		setup: SnapSetup{
 			SnapPath:  update.Path,
-			Channel:   channel,
+			Channel:   update.RevOpts.Channel,
 			CohortKey: update.RevOpts.CohortKey,
 		},
 		info:       info,
