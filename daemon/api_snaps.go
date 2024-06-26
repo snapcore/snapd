@@ -523,7 +523,6 @@ func removeSnap(inst *snapInstruction, st *state.State) (string, []*state.TaskSe
 }
 
 func removeSnapComponents(inst *snapInstruction, st *state.State) (msg string, allTaskSets []*state.TaskSet, err error) {
-	allComps := []string{}
 	compsMsg := make([]string, 0, len(inst.CompsForSnaps))
 	for snap, comps := range inst.CompsForSnaps {
 		tss, err := snapstateRemoveComponents(st, snap, comps)
@@ -531,7 +530,6 @@ func removeSnapComponents(inst *snapInstruction, st *state.State) (msg string, a
 			return "", nil, err
 		}
 		allTaskSets = append(allTaskSets, tss...)
-		allComps = append(allComps, comps...)
 		compsMsg = append(compsMsg, fmt.Sprintf(i18n.G("%v for %q snap"), comps, snap))
 	}
 

@@ -3567,7 +3567,7 @@ func (s *snapsSuite) TestPostRemoveComponents(c *check.C) {
 		return []*state.TaskSet{state.NewTaskSet(t)}, nil
 	})()
 
-	buf := strings.NewReader(fmt.Sprintf(`{"action": "remove","components":["comp1","comp2"]}`))
+	buf := strings.NewReader(`{"action": "remove","components":["comp1","comp2"]}`)
 	req, err := http.NewRequest("POST", "/v2/snaps/foo", buf)
 	c.Assert(err, check.IsNil)
 	req.Header.Set("Content-Type", "application/json")
