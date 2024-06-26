@@ -229,7 +229,7 @@ func RemoveComponents(st *state.State, snapName string, compName []string) ([]*s
 				CompRev:   snap.R(0),
 			}
 		}
-		ts, err := removeComponentTasks(st, &snapst, compst, info)
+		ts, err := removeComponentTasks(st, compst, info)
 		if err != nil {
 			return nil, err
 		}
@@ -240,7 +240,7 @@ func RemoveComponents(st *state.State, snapName string, compName []string) ([]*s
 	return tss, nil
 }
 
-func removeComponentTasks(st *state.State, snapst *SnapState, compst *sequence.ComponentState, info *snap.Info) (*state.TaskSet, error) {
+func removeComponentTasks(st *state.State, compst *sequence.ComponentState, info *snap.Info) (*state.TaskSet, error) {
 	instName := info.InstanceName()
 
 	// For the moment we consider the same conflicts as if the component
@@ -287,7 +287,10 @@ func removeComponentTasks(st *state.State, snapst *SnapState, compst *sequence.C
 		prev = t
 	}
 
-	// TODO Remove profiles for component hooks
+	// TODO Remove profiles for component hooks. Note that we
+	// should make sure that even if we remove multiple components
+	// or the snap plus all its components there is only one setup
+	// profiles task, so maybe this needs to be done elsewhere.
 
 	// For kernel-modules, regenerate drivers tree
 	revisionStr := fmt.Sprintf(" (%s)", compst.SideInfo.Revision)

@@ -141,3 +141,43 @@ func (s *snapmgrTestSuite) TestRemoveNonPresentComponent(c *C) {
 		CompRev:   snap.R(0),
 	})
 }
+
+func (s *snapmgrTestSuite) TestRemoveComponentPathRun(c *C) {
+	const snapName = "mysnap"
+	const compName = "mycomp"
+	const compName2 = "other-comp"
+	snapRev := snap.R(1)
+	info := createTestSnapInfoForComponent(c, snapName, snapRev, compName)
+	ci, _ := createTestComponent(c, snapName, compName, info)
+	s.AddCleanup(snapstate.MockReadComponentInfo(func(
+		compMntDir string, snapInfo *snap.Info, csi *snap.ComponentSideInfo) (*snap.ComponentInfo, error) {
+		return ci, nil
+	}))
+
+	s.state.Lock()
+	defer s.state.Unlock()
+
+	csi1 := snap.NewComponentSideInfo(naming.NewComponentRef(snapName, compName), snap.R(1))
+	csi2 := snap.NewComponentSideInfo(naming.NewComponentRef(snapName, compName2), snap.R(33))
+	cs1 := sequence.NewComponentState(csi1, snap.KernelModulesComponent)
+	cs2 := sequence.NewComponentState(csi2, snap.KernelModulesComponent)
+	setStateWithComponents(s.state, snapName, snapRev, []*sequence.ComponentState{cs1, cs2})
+
+	tss, err := snapstate.RemoveComponents(s.state, snapName, []string{compName})
+	c.Assert(err, IsNil)
+
+	c.Assert(len(tss), Equals, 1)
+
+	chg := s.state.NewChange("remove component", "...")
+	for _, ts := range tss {
+		chg.AddAll(ts)
+	}
+
+	s.settle(c)
+
+	c.Assert(chg.Err(), IsNil)
+	c.Assert(chg.IsReady(), Equals, true)
+	for _, ts := range tss {
+		verifyComponentRemoveTasks(c, compTypeIsKernMods, ts)
+	}
+}
