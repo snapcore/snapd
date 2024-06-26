@@ -95,6 +95,7 @@ func init() {
 		name:                  "screen-inhibit-control",
 		summary:               screenInhibitControlSummary,
 		implicitOnClassic:     true,
+		implicitOnCore:        true,
 		baseDeclarationSlots:  screenInhibitBaseDeclarationSlots,
 		connectedPlugAppArmor: screenInhibitControlConnectedPlugAppArmor,
 	})
