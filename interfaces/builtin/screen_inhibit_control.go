@@ -72,6 +72,12 @@ dbus (send)
     interface=org.freedesktop.PowerManagement.Inhibit
     member={Inhibit,UnInhibit}
     peer=(label=unconfined),
+dbus (receive)
+    bus=session
+    path=/org/freedesktop/PowerManagement/Inhibit
+    interface=org.freedesktop.PowerManagement.Inhibit
+    member=HasInhibitChanged
+    peer=(label=unconfined),
 
 # API rule
 dbus (send)
