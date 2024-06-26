@@ -160,6 +160,63 @@ dbus (send)
 # Allow access to the ICC profiles in the home directory to
 # be referred to from colord
 owner @{HOME}/.local/share/icc r,
+
+
+# Allow to send updates to the desktop session about on going jobs
+# (for progress display in the task list)
+dbus (send)
+    bus=session
+    interface=com.canonical.Unity.LauncherEntry
+    member=Update
+    peer=(label=unconfined),
+
+# Allow to send updates to the desktop session about on going jobs
+# (for KDE Plasma specific details)
+dbus (send)
+    bus=session
+    interface=org.kde.JobViewServer*
+    path=/JobViewServer
+    member=requestView
+    peer=(label=unconfined),
+dbus (send)
+    bus=session
+    interface=org.kde.JobView*
+    path=/org/kde/notificationmanager/jobs/*
+    member={update,terminate}
+    peer=(label=unconfined),
+
+# Allow to display Status Notifier Items in the KDE Plasma systray
+# (including supporting context menu)
+dbus (send)
+    bus=session
+    interface=org.kde.StatusNotifierWatcher
+    path=/StatusNotifierWatcher
+    member=RegisterStatusNotifierItem
+    peer=(label=unconfined),
+dbus (send)
+    bus=session
+    interface=org.freedesktop.DBus.Properties
+    path=/StatusNotifierWatcher
+    member=Get
+    peer=(label=unconfined),
+dbus (receive)
+    bus=session
+    interface=org.kde.StatusNotifierItem
+    path=/StatusNotifierItem
+    member={ProvideXdgActivationToken,Activate}
+    peer=(label=unconfined),
+dbus (receive)
+    bus=session
+    interface=org.freedesktop.DBus.Properties
+    path=/StatusNotifierItem
+    member=GetAll
+    peer=(label=unconfined),
+dbus (receive)
+    bus=session
+    interface=com.canonical.dbusmenu
+    path=/MenuBar
+    member={AboutToShow,GetLayout,Event}
+    peer=(label=unconfined),
 `
 
 const desktopConnectedPlugAppArmorClassic = `
