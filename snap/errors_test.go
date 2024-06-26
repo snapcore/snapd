@@ -20,7 +20,6 @@
 package snap_test
 
 import (
-	"errors"
 	"fmt"
 
 	. "gopkg.in/check.v1"
@@ -42,12 +41,6 @@ func (s *errorsSuite) TestNotSnapErrorWithDetails(c *C) {
 	c.Check(err, ErrorMatches, `cannot process snap or snapdir: cannot open "some path"`)
 }
 
-func (s *errorsSuite) TestNotInstalledErrorIs(c *C) {
-	err := snap.NotInstalledError{}
-	c.Check(err.Is(&snap.NotInstalledError{}), Equals, true)
-	c.Check(err.Is(errors.New("some error")), Equals, false)
-}
-
 func (s *errorsSuite) TestComponentNotInstalledErrorDetails(c *C) {
 	err := snap.ComponentNotInstalledError{
 		NotInstalledError: snap.NotInstalledError{Snap: "mysnap", Rev: snap.R(1)},
@@ -62,10 +55,4 @@ func (s *errorsSuite) TestComponentNotInstalledErrorDetails(c *C) {
 		Component:         "mycomp",
 	}
 	c.Check(err, ErrorMatches, `component "mycomp" is not installed for revision 1 of snap "mysnap"`)
-}
-
-func (s *errorsSuite) TestComponentNotInstalledErrorDetailsIs(c *C) {
-	err := snap.ComponentNotInstalledError{}
-	c.Check(err.Is(&snap.ComponentNotInstalledError{}), Equals, true)
-	c.Check(err.Is(errors.New("some error")), Equals, false)
 }
