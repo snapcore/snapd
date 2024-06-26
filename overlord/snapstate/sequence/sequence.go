@@ -182,7 +182,7 @@ func (snapSeq *SnapSequence) RemoveComponentForRevision(snapRev snap.Revision, c
 	return unlinkedComp
 }
 
-// ComponentSideInfoForRev returns cref's component side info for the revision
+// ComponentStateForRev returns cref's component side info for the revision
 // (sequence point) indicated by revIdx if there is one.
 func (snapSeq *SnapSequence) ComponentStateForRev(revIdx int, cref naming.ComponentRef) *ComponentState {
 	for _, comp := range snapSeq.Revisions[revIdx].Components {
