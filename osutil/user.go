@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -31,6 +30,7 @@ import (
 	"syscall"
 
 	"github.com/snapcore/snapd/osutil/sys"
+	"github.com/snapcore/snapd/osutil/user"
 )
 
 var (

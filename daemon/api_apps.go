@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 
 /*
- * Copyright (C) 2015-2020 Canonical Ltd
+ * Copyright (C) 2015-2024 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -26,12 +26,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os/user"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/snapcore/snapd/client/clientutil"
+	"github.com/snapcore/snapd/osutil/user"
 	"github.com/snapcore/snapd/overlord/auth"
 	"github.com/snapcore/snapd/overlord/servicestate"
 	"github.com/snapcore/snapd/overlord/state"
