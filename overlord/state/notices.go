@@ -18,8 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/signal"
 	"sort"
 	"strconv"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -429,7 +433,15 @@ func (s *State) unflattenNotices(flat []*Notice) {
 // It waits till there is at least one matching notice or the context is
 // cancelled. If there are existing notices that match the filter,
 // WaitNotices will return them immediately.
+
+var daemonTerminated = false
+
 func (s *State) WaitNotices(ctx context.Context, filter *NoticeFilter) ([]*Notice, error) {
+	// don't allow new waits if we are already closing the daemon
+	if daemonTerminated {
+		// Maybe we should close the socket. Ideas about how to do it?
+		return nil, fmt.Errorf("closing snapd")
+	}
 	s.reading()
 
 	// If there are existing notices, return them right away.
@@ -456,9 +468,36 @@ func (s *State) WaitNotices(ctx context.Context, filter *NoticeFilter) ([]*Notic
 	})
 	defer stop()
 
+	chKill := make(chan os.Signal, 2)
+	signal.Notify(chKill, syscall.SIGINT, syscall.SIGTERM)
+	var wait sync.WaitGroup
+	wait.Add(1)
+	go func(chKillf *chan os.Signal, waitf *sync.WaitGroup) {
+		// SIGxxx thread
+		a := <-*chKillf
+		signal.Stop(*chKillf)
+		if a != nil {
+			// SIGTERM or SIGKILL has been received
+			daemonTerminated = true
+			// unlock the wait
+			s.noticeCond.Broadcast()
+		}
+		waitf.Done() // notify the main thread that we have finished
+	}(&chKill, &wait)
+	defer func() {
+		// this will also notify the SIGxxx thread to exit
+		close(chKill)
+		// wait for the thread to fully exit, to avoid problems with shared variables and channels
+		wait.Wait()
+	}()
+
 	for {
 		// Wait till a new notice occurs or a context is cancelled.
 		s.noticeCond.Wait()
+
+		if daemonTerminated {
+			return nil, fmt.Errorf("closing snapd")
+		}
 
 		// If this context is cancelled, return the error.
 		ctxErr := ctx.Err()
