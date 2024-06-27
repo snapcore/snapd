@@ -43,11 +43,6 @@ func (e NotInstalledError) Error() string {
 	return fmt.Sprintf("revision %s of snap %q is not installed", e.Rev, e.Snap)
 }
 
-func (e *NotInstalledError) Is(err error) bool {
-	_, ok := err.(*NotInstalledError)
-	return ok
-}
-
 // NotSnapError is returned if an operation expects a snap file or snap dir
 // but no valid input is provided. When creating it ensure "Err" is set
 // so that a useful error can be displayed to the user.
@@ -63,4 +58,21 @@ func (e NotSnapError) Error() string {
 		return fmt.Sprintf("cannot process snap or snapdir %q", e.Path)
 	}
 	return fmt.Sprintf("cannot process snap or snapdir: %v", e.Err)
+}
+
+// ComponentNotInstalledError is used when a component is not in the
+// system while trying to manage it.
+type ComponentNotInstalledError struct {
+	NotInstalledError
+	Component string
+	CompRev   Revision
+}
+
+func (e ComponentNotInstalledError) Error() string {
+	if e.CompRev.Unset() {
+		return fmt.Sprintf("component %q is not installed for revision %s of snap %q",
+			e.Component, e.Rev, e.Snap)
+	}
+	return fmt.Sprintf("revision %s of component %q is not installed for revision %s of snap %q",
+		e.CompRev, e.Component, e.Rev, e.Snap)
 }

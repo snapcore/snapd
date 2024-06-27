@@ -26,8 +26,10 @@ import (
 
 	"github.com/snapcore/snapd/i18n"
 	"github.com/snapcore/snapd/overlord/snapstate/backend"
+	"github.com/snapcore/snapd/overlord/snapstate/sequence"
 	"github.com/snapcore/snapd/overlord/state"
 	"github.com/snapcore/snapd/snap"
+	"github.com/snapcore/snapd/snap/naming"
 )
 
 // InstallComponentPath returns a set of tasks for installing a snap component
@@ -207,4 +209,114 @@ func doInstallComponent(st *state.State, snapst *SnapState, compSetup *Component
 	// for kernel-modules components if installed along the kernel)
 
 	return installSet, nil
+}
+
+func RemoveComponents(st *state.State, snapName string, compName []string) ([]*state.TaskSet, error) {
+	var snapst SnapState
+	err := Get(st, snapName, &snapst)
+	if err != nil && !errors.Is(err, state.ErrNoState) {
+		return nil, err
+	}
+	if !snapst.IsInstalled() {
+		return nil, &snap.NotInstalledError{Snap: snapName, Rev: snap.R(0)}
+	}
+
+	info, err := Info(st, snapName, snapst.Current)
+	if err != nil {
+		return nil, err
+	}
+
+	var tss []*state.TaskSet
+	for _, comp := range compName {
+		cref := naming.NewComponentRef(snapName, comp)
+		compst := snapst.CurrentComponentState(cref)
+		if compst == nil {
+			return nil, &snap.ComponentNotInstalledError{
+				NotInstalledError: snap.NotInstalledError{
+					Snap: info.InstanceName(),
+					Rev:  info.Revision,
+				},
+				Component: comp,
+				CompRev:   snap.R(0),
+			}
+		}
+		ts, err := removeComponentTasks(st, compst, info)
+		if err != nil {
+			return nil, err
+		}
+		ts.JoinLane(st.NewLane())
+		tss = append(tss, ts)
+	}
+
+	return tss, nil
+}
+
+func removeComponentTasks(st *state.State, compst *sequence.ComponentState, info *snap.Info) (*state.TaskSet, error) {
+	instName := info.InstanceName()
+
+	// For the moment we consider the same conflicts as if the component
+	// was actually the snap.
+	if err := CheckChangeConflict(st, instName, nil); err != nil {
+		return nil, err
+	}
+
+	// TODO check if component is enforced by validation set (see snapstate.canRemove)
+
+	snapSup := &SnapSetup{
+		Base:        info.Base,
+		SideInfo:    &info.SideInfo,
+		Channel:     info.Channel,
+		Type:        info.Type(),
+		Version:     info.Version,
+		PlugsOnly:   len(info.Slots) == 0,
+		InstanceKey: info.InstanceKey,
+	}
+	compSetup := &ComponentSetup{
+		CompSideInfo: compst.SideInfo,
+		CompType:     compst.CompType,
+	}
+
+	// TODO Run component remove hook. This will change the first task run,
+	// changing uses of unlink below to the new task.
+
+	// Unlink component
+	unlink := st.NewTask("unlink-current-component", fmt.Sprintf(i18n.G(
+		"Make current revision for component %q unavailable"),
+		compst.SideInfo.Component))
+	unlink.Set("component-setup", compSetup)
+	unlink.Set("snap-setup", snapSup)
+
+	var prev *state.Task
+	tasks := []*state.Task{unlink}
+	prev = unlink
+
+	addTask := func(t *state.Task) {
+		t.Set("component-setup-task", unlink.ID())
+		t.Set("snap-setup-task", unlink.ID())
+		t.WaitFor(prev)
+		tasks = append(tasks, t)
+		prev = t
+	}
+
+	// TODO Remove profiles for component hooks. Note that we
+	// should make sure that even if we remove multiple components
+	// or the snap plus all its components there is only one setup
+	// profiles task, so maybe this needs to be done elsewhere.
+
+	// For kernel-modules, regenerate drivers tree
+	revisionStr := fmt.Sprintf(" (%s)", compst.SideInfo.Revision)
+	if compst.CompType == snap.KernelModulesComponent {
+		kmodSetup := st.NewTask("clear-kernel-modules-components",
+			fmt.Sprintf(i18n.G("Clear kernel-modules component %q%s"),
+				compst.SideInfo.Component, revisionStr))
+		addTask(kmodSetup)
+	}
+
+	// Discard component
+	discardComp := st.NewTask("discard-component", fmt.Sprintf(i18n.G(
+		"Discard previous revision for component %q"),
+		compst.SideInfo.Component))
+	addTask(discardComp)
+
+	return state.NewTaskSet(tasks...), nil
 }
