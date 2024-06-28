@@ -88,3 +88,12 @@ func (s *LocaleControlInterfaceSuite) TestUsedSecuritySystems(c *C) {
 func (s *LocaleControlInterfaceSuite) TestInterfaces(c *C) {
 	c.Check(builtin.Interfaces(), testutil.DeepContains, s.iface)
 }
+
+func (s *LocaleControlInterfaceSuite) TestStaticInfo(c *C) {
+	si := interfaces.StaticInfoOf(s.iface)
+	c.Assert(si.ImplicitOnCore, Equals, true)
+	c.Assert(si.ImplicitOnClassic, Equals, true)
+	c.Assert(si.Summary, Equals, `allows control over system locale`)
+	c.Assert(si.BaseDeclarationSlots, testutil.Contains, "locale-control")
+	c.Assert(si.BaseDeclarationSlots, testutil.Contains, "deny-auto-connection: true")
+}

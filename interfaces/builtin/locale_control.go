@@ -70,6 +70,7 @@ func init() {
 		name:                  "locale-control",
 		summary:               localeControlSummary,
 		implicitOnClassic:     true,
+		implicitOnCore:        true,
 		baseDeclarationSlots:  localeControlBaseDeclarationSlots,
 		connectedPlugAppArmor: localeControlConnectedPlugAppArmor,
 	})
