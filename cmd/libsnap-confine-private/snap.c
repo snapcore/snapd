@@ -45,8 +45,8 @@ bool sc_security_tag_validate(const char *security_tag,
 	// first capture is for verifying the full security tag, second capture
 	// for verifying the snap_name is correct for this security tag, eighth capture
 	// for verifying the component_name is correct for this security tag. the
-    // expression currently contains 9 capture groups, but we only care about
-    // these 3.
+	// expression currently contains 9 capture groups, but we only care about
+	// these 3.
 	regmatch_t matches[9];
 	int status =
 	    regexec(&re, security_tag, sizeof matches / sizeof *matches,
@@ -136,7 +136,7 @@ static int skip_one_char(const char **p, char c)
 
 static void validate_as_snap_or_component_name(const char *name,
 					       int err_code,
-                           const char *err_subject,
+					       const char *err_subject,
 					       sc_error **errorp)
 {
 	// NOTE: This function should be synchronized with the two other
@@ -180,35 +180,41 @@ static void validate_as_snap_or_component_name(const char *name,
 				err =
 				    sc_error_init(SC_SNAP_DOMAIN,
 						  err_code,
-						  "%s cannot end with a dash", err_subject);
+						  "%s cannot end with a dash",
+						  err_subject);
 				goto out;
 			}
 			if (skip_one_char(&p, '-') > 0) {
 				err =
 				    sc_error_init(SC_SNAP_DOMAIN,
 						  err_code,
-						  "%s cannot contain two consecutive dashes", err_subject);
+						  "%s cannot contain two consecutive dashes",
+						  err_subject);
 				goto out;
 			}
 			continue;
 		}
 		err = sc_error_init(SC_SNAP_DOMAIN, err_code,
-				    "%s must use lower case letters, digits or dashes", err_subject);
+				    "%s must use lower case letters, digits or dashes",
+				    err_subject);
 		goto out;
 	}
 	if (!got_letter) {
 		err = sc_error_init(SC_SNAP_DOMAIN, err_code,
-				    "%s must contain at least one letter", err_subject);
+				    "%s must contain at least one letter",
+				    err_subject);
 		goto out;
 	}
 	if (n < 2) {
 		err = sc_error_init(SC_SNAP_DOMAIN, err_code,
-				    "%s must be longer than 1 character", err_subject);
+				    "%s must be longer than 1 character",
+				    err_subject);
 		goto out;
 	}
 	if (n > SNAP_NAME_LEN) {
 		err = sc_error_init(SC_SNAP_DOMAIN, err_code,
-				    "%s must be shorter than 40 characters", err_subject);
+				    "%s must be shorter than 40 characters",
+				    err_subject);
 		goto out;
 	}
 
@@ -352,12 +358,15 @@ void sc_snap_component_validate(const char *snap_component,
 	char component_name[SNAP_NAME_LEN + 1] = { 0 };
 	strncpy(component_name, pos + 1, component_name_len);
 
-	validate_as_snap_or_component_name(snap_name, SC_SNAP_INVALID_COMPONENT, "snap name in component", &err);
+	validate_as_snap_or_component_name(snap_name, SC_SNAP_INVALID_COMPONENT,
+					   "snap name in component", &err);
 	if (err != NULL) {
 		goto out;
 	}
 
-	validate_as_snap_or_component_name(component_name, SC_SNAP_INVALID_COMPONENT, "component name", &err);
+	validate_as_snap_or_component_name(component_name,
+					   SC_SNAP_INVALID_COMPONENT,
+					   "component name", &err);
 	if (err != NULL) {
 		goto out;
 	}
@@ -382,7 +391,8 @@ void sc_snap_component_validate(const char *snap_component,
 
 void sc_snap_name_validate(const char *snap_name, sc_error **errorp)
 {
-	validate_as_snap_or_component_name(snap_name, SC_SNAP_INVALID_NAME, "snap name", errorp);
+	validate_as_snap_or_component_name(snap_name, SC_SNAP_INVALID_NAME,
+					   "snap name", errorp);
 }
 
 void sc_snap_drop_instance_key(const char *instance_name, char *snap_name,
