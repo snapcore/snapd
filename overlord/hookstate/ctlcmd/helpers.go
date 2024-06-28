@@ -34,9 +34,21 @@ import (
 	"github.com/snapcore/snapd/overlord/snapstate"
 	"github.com/snapcore/snapd/overlord/state"
 	"github.com/snapcore/snapd/snap"
+	"github.com/snapcore/snapd/snap/naming"
 )
 
 var finalTasks map[string]bool
+
+var (
+	servicestateControl = servicestate.Control
+	// TODO link to real snapstate functions once implemented
+	snapstateInstallComponents = func(st *state.State, comps []string) ([]*state.TaskSet, error) {
+		panic("not implemented yet")
+	}
+	snapstateRemoveComponents = func(st *state.State, comps []string) ([]*state.TaskSet, error) {
+		panic("not implemented yet")
+	}
+)
 
 func init() {
 	finalTasks = make(map[string]bool, len(snapstate.FinalTasks))
@@ -82,8 +94,6 @@ func getServiceInfos(st *state.State, snapName string, serviceNames []string) ([
 
 	return svcs, nil
 }
-
-var servicestateControl = servicestate.Control
 
 func queueCommand(context *hookstate.Context, tts []*state.TaskSet) error {
 	hookTask, ok := context.Task()
@@ -168,6 +178,84 @@ func runServiceCommand(context *hookstate.Context, inst *servicestate.Instructio
 		return chg.Err()
 	case <-time.After(configstate.ConfigureHookTimeout() / 2):
 		return fmt.Errorf("%s command is taking too long", inst.Action)
+	}
+}
+
+func validateSnapAndCompsNames(names []string, ctxSnap string) ([]string, error) {
+	comps := make([]string, len(names))
+	for i, name := range names {
+		snap, comp := snap.SplitSnapComponentInstanceName(name)
+		// if snap is present it must be the context snap for the moment
+		if snap != "" && snap != ctxSnap {
+			return nil, fmt.Errorf("cannot install snaps using snapctl")
+		}
+		if err := naming.ValidateSnap(comp); err != nil {
+			return nil, err
+		}
+		comps[i] = comp
+	}
+	return comps, nil
+}
+
+type managementCommandTp int
+
+const (
+	installManagementCommand managementCommandTp = iota
+	removeManagementCommand
+)
+
+type managementCommand struct {
+	typ        managementCommandTp
+	components []string
+}
+
+func runSnapManagementCommand(context *hookstate.Context, cmd *managementCommand) error {
+	st := context.State()
+	var tts []*state.TaskSet
+	var err error
+	var cmdStr, cmdVerb string
+
+	st.Lock()
+	switch cmd.typ {
+	case installManagementCommand:
+		tts, err = snapstateInstallComponents(st, cmd.components)
+		cmdStr = "install"
+		cmdVerb = "Installing"
+	case removeManagementCommand:
+		tts, err = snapstateRemoveComponents(st, cmd.components)
+		cmdStr = "remove"
+		cmdVerb = "Removing"
+	default:
+		err = fmt.Errorf("internal error: %q is not a valid snap management command", cmd.typ)
+	}
+	st.Unlock()
+	if err != nil {
+		return err
+	}
+
+	if !context.IsEphemeral() {
+		// Differently to service control commands, we always queue the
+		// management tasks if run from a hook.
+		return queueCommand(context, tts)
+	}
+
+	st.Lock()
+	chg := st.NewChange("snapctl-"+cmdStr,
+		fmt.Sprintf("%s components %v for snap %s",
+			cmdVerb, cmd.components, context.InstanceName()))
+	for _, ts := range tts {
+		chg.AddAll(ts)
+	}
+	st.EnsureBefore(0)
+	st.Unlock()
+
+	select {
+	case <-chg.Ready():
+		st.Lock()
+		defer st.Unlock()
+		return chg.Err()
+	case <-time.After(10 * time.Minute):
+		return fmt.Errorf("snapctl %s command is taking too long", cmdStr)
 	}
 }
 

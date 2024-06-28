@@ -72,6 +72,18 @@ func MockServicestateControlFunc(f func(*state.State, []*snap.AppInfo, *services
 	return func() { servicestateControl = old }
 }
 
+func MockSnapstateInstallComponentsFunc(f func(st *state.State, comps []string) ([]*state.TaskSet, error)) (restore func()) {
+	old := snapstateInstallComponents
+	snapstateInstallComponents = f
+	return func() { snapstateInstallComponents = old }
+}
+
+func MockSnapstateRemoveComponentsFunc(f func(st *state.State, comps []string) ([]*state.TaskSet, error)) (restore func()) {
+	old := snapstateRemoveComponents
+	snapstateRemoveComponents = f
+	return func() { snapstateRemoveComponents = old }
+}
+
 func MockDevicestateSystemModeInfoFromState(f func(*state.State) (*devicestate.SystemModeInfo, error)) (restore func()) {
 	old := devicestateSystemModeInfoFromState
 	devicestateSystemModeInfoFromState = f
