@@ -215,13 +215,19 @@ func execApp(snapApp, revision, command string, args []string) error {
 	// A similar workaround is necessary for strictly-confined Snaps to have their
 	// environment set up on libhybris devices, in order to access GL/EGL drivers,
 	// among other potentially viable libraries (as long as glibc wrappers exist).
+	// This leads the setup to an environment with:
+	// - libhybris wrappers available in an extra directory
+	// - bionic libraries residing in /android
+
 	// libhybris takes environment variables that point to the respective Android
 	// bionic linker. Do this by detecting the system.prop file shipped with every
 	// libhybris-compatible runtime environment.
-	err3 := syscallStat("/system/build.prop", &stVar)
-	if !info.NeedsClassic() && err3 == nil {
+	var stLibHybrisVar syscall.Stat_t
+	err3 := syscallStat("/var/lib/snapd/lib/gl/libhybris", &stLibHybrisVar)
+	if err3 == nil {
 		env["HYBRIS_LINKER_DIR"] = "/var/lib/snapd/lib/gl/libhybris/linker"
 		env["HYBRIS_EGLPLATFORM_DIR"] = "/var/lib/snapd/lib/gl/libhybris"
+		env["HYBRIS_EGLPLATFORM"] = "wayland"
 	}
 
 	// strings.Split() is ok here because we validate all app fields and the
