@@ -227,7 +227,6 @@ func execApp(snapApp, revision, command string, args []string) error {
 	if err3 == nil {
 		env["HYBRIS_LINKER_DIR"] = "/var/lib/snapd/lib/gl/libhybris/linker"
 		env["HYBRIS_EGLPLATFORM_DIR"] = "/var/lib/snapd/lib/gl/libhybris"
-		env["HYBRIS_EGLPLATFORM"] = "wayland"
 	}
 
 	// strings.Split() is ok here because we validate all app fields and the
