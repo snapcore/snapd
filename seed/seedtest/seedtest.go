@@ -326,7 +326,7 @@ func (s *TestingSeed20) MakeSeedWithModel(c *C, label string, model *asserts.Mod
 		c.Assert(err, IsNil)
 		info, err := snap.ReadInfoFromSnapFile(f, si)
 		c.Assert(err, IsNil)
-		w.SetInfo(sn, info)
+		w.SetInfo(sn, info, nil)
 		if aRefs != nil {
 			localARefs[sn] = aRefs
 		}
@@ -355,7 +355,7 @@ func (s *TestingSeed20) MakeSeedWithModel(c *C, label string, model *asserts.Mod
 
 			info := s.AssertedSnapInfo(name)
 			c.Assert(info, NotNil, Commentf("no snap info for %q", name))
-			err := w.SetInfo(sn, info)
+			err := w.SetInfo(sn, info, nil)
 			c.Assert(err, IsNil)
 
 			if _, err := os.Stat(sn.Path); err == nil {
