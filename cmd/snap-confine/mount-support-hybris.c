@@ -94,7 +94,8 @@ static void sc_hybris_mount_android_rootfs(const char *rootfs_dir)
 {
 	// Bind mount a tmpfs on $rootfs_dir/$tgt_dir (i.e. /var/lib/snapd/lib/gl)
 	char path_buf[PATH_MAX] = { 0 };
-	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir, SC_HYBRIS_ROOTFS);
+	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir,
+			 SC_HYBRIS_ROOTFS);
 	const char *android_rootfs_dir = path_buf;
 
 	sc_identity old = sc_set_effective_identity(sc_root_group_identity());
@@ -108,29 +109,35 @@ static void sc_hybris_mount_android_rootfs(const char *rootfs_dir)
 	}
 	(void)sc_set_effective_identity(old);
 
-	if (mount(SC_HYBRIS_ROOTFS, android_rootfs_dir, NULL, MS_BIND | MS_REC | MS_RDONLY, NULL)) {
+	if (mount
+	    (SC_HYBRIS_ROOTFS, android_rootfs_dir, NULL,
+	     MS_BIND | MS_REC | MS_RDONLY, NULL)) {
 		die("Cannot mount Halium environment into target");
 	}
 
-	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir, SC_HYBRIS_SYSTEM_SYMLINK);
+	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir,
+			 SC_HYBRIS_SYSTEM_SYMLINK);
 	const char *android_system_symlink = path_buf;
 	if (symlink(SC_HYBRIS_SYSTEM_SYMLINK_TARGET, android_system_symlink)) {
 		die("Cannot set symlink for %s", SC_HYBRIS_SYSTEM_SYMLINK);
 	}
 
-	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir, SC_HYBRIS_VENDOR_SYMLINK);
+	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir,
+			 SC_HYBRIS_VENDOR_SYMLINK);
 	const char *android_vendor_symlink = path_buf;
 	if (symlink(SC_HYBRIS_VENDOR_SYMLINK_TARGET, android_vendor_symlink)) {
 		die("Cannot set symlink for %s", SC_HYBRIS_VENDOR_SYMLINK);
 	}
 
-	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir, SC_HYBRIS_ODM_SYMLINK);
+	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir,
+			 SC_HYBRIS_ODM_SYMLINK);
 	const char *android_odm_symlink = path_buf;
 	if (symlink(SC_HYBRIS_ODM_SYMLINK_TARGET, android_odm_symlink)) {
 		die("Cannot set symlink for %s", SC_HYBRIS_ODM_SYMLINK);
 	}
 
-	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir, SC_HYBRIS_APEX_SYMLINK);
+	sc_must_snprintf(path_buf, sizeof(path_buf), "%s%s", rootfs_dir,
+			 SC_HYBRIS_APEX_SYMLINK);
 	const char *android_apex_symlink = path_buf;
 	if (symlink(SC_HYBRIS_APEX_SYMLINK_TARGET, android_apex_symlink)) {
 		die("Cannot set symlink for %s", SC_HYBRIS_APEX_SYMLINK);
@@ -142,8 +149,7 @@ static void sc_hybris_mount_main(const char *rootfs_dir)
 	const char *main_libs[] = {
 		NATIVE_LIBDIR "/" HOST_ARCH_TRIPLET,
 	};
-	const size_t main_libs_len =
-	    sizeof main_libs / sizeof *main_libs;
+	const size_t main_libs_len = sizeof main_libs / sizeof *main_libs;
 
 	sc_mkdir_and_mount_and_glob_files(rootfs_dir, main_libs,
 					  main_libs_len, SC_LIBGL_DIR,
@@ -160,7 +166,8 @@ static void sc_hybris_mount_vulkan(const char *rootfs_dir)
 
 	sc_mkdir_and_mount_and_glob_files(rootfs_dir, vulkan_sources,
 					  vulkan_sources_len, SC_VULKAN_DIR,
-					  hybris_vulkan_globs, hybris_vulkan_globs_len);
+					  hybris_vulkan_globs,
+					  hybris_vulkan_globs_len);
 }
 
 static void sc_hybris_mount_egl(const char *rootfs_dir)

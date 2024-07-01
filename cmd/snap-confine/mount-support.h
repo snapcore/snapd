@@ -89,7 +89,6 @@ void sc_ensure_snap_dir_shared_mounts(void);
 void sc_setup_parallel_instance_classic_mounts(const char *snap_name,
 					       const char *snap_instance_name);
 
-
 /**
  * Populate libgl_dir with a symlink farm to files matching glob_list.
  *
