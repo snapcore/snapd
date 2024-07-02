@@ -619,6 +619,7 @@ pkg_dependencies_ubuntu_classic(){
                 qemu-kvm
                 qemu-utils
                 shellcheck
+                xxd
                 "
             ;;
         ubuntu-22.*|ubuntu-23.*|ubuntu-24.*)
@@ -632,6 +633,7 @@ pkg_dependencies_ubuntu_classic(){
                 lz4
                 qemu-kvm
                 qemu-utils
+                xxd
                 "
             ;;
         ubuntu-*)
