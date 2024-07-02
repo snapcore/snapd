@@ -1071,7 +1071,7 @@ func continueInhibitedAutoRefresh(st *state.State, snapName string) error {
 	}
 
 	flags := &Flags{IsAutoRefresh: true, IsContinuedAutoRefresh: true}
-	tss, err := autoRefreshPhase2(context.TODO(), st, []*refreshCandidate{hint}, flags, "")
+	tss, err := autoRefreshPhase2(st, []*refreshCandidate{hint}, flags, "")
 	if err != nil {
 		return err
 	}
@@ -4543,7 +4543,7 @@ func (m *SnapManager) doConditionalAutoRefresh(t *state.Task, tomb *tomb.Tomb) e
 		return nil
 	}
 
-	updateTss, err := autoRefreshPhase2(context.TODO(), st, snaps, nil, t.Change().ID())
+	updateTss, err := autoRefreshPhase2(st, snaps, nil, t.Change().ID())
 	if err != nil {
 		return err
 	}

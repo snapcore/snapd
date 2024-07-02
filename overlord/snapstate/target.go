@@ -90,9 +90,22 @@ func (t *target) setups(st *state.State, opts Options) (SnapSetup, []ComponentSe
 		return SnapSetup{}, nil, err
 	}
 
-	flags, err := earlyChecks(st, &t.snapst, t.info, opts.Flags)
+	flags := opts.Flags
+
+	if !flags.JailMode && !flags.DevMode {
+		flags.Classic = flags.Classic || t.snapst.Classic
+	}
+
+	flags, err = earlyChecks(st, &t.snapst, t.info, flags)
 	if err != nil {
 		return SnapSetup{}, nil, err
+	}
+
+	// to match the behavior of the original Update and UpdateMany, we only
+	// allow updating ignoring validation sets if we are working with
+	// exactly one snap
+	if !opts.ExpectOneSnap {
+		flags.IgnoreValidation = t.snapst.IgnoreValidation
 	}
 
 	compsups := make([]ComponentSetup, 0, len(t.components))
@@ -122,6 +135,7 @@ func (t *target) setups(st *state.State, opts Options) (SnapSetup, []ComponentSe
 		CohortKey:    t.setup.CohortKey,
 		DownloadInfo: t.setup.DownloadInfo,
 		SnapPath:     t.setup.SnapPath,
+		AlwaysUpdate: t.setup.AlwaysUpdate,
 
 		Base:               t.info.Base,
 		Prereq:             getKeys(providerContentAttrs),
@@ -201,9 +215,14 @@ func StoreInstallGoal(snaps ...StoreSnap) InstallGoal {
 	}
 }
 
-func validateRevisionOpts(opts RevisionOptions) error {
+func validateRevisionOpts(opts *RevisionOptions) error {
 	if opts.CohortKey != "" && !opts.Revision.Unset() {
 		return errors.New("cannot specify revision and cohort")
+	}
+
+	// if we're leaving the cohort, clear out any provided cohort key
+	if opts.LeaveCohort {
+		opts.CohortKey = ""
 	}
 
 	return nil
@@ -247,8 +266,12 @@ func (s *storeInstallGoal) toInstall(ctx context.Context, st *state.State, opts 
 	includeResources := false
 	actions := make([]*store.SnapAction, 0, len(s.snaps))
 	for _, sn := range s.snaps {
-		action, err := installActionForStoreTarget(sn, opts, enforcedSets)
-		if err != nil {
+		action := &store.SnapAction{
+			Action:       "install",
+			InstanceName: sn.InstanceName,
+		}
+
+		if err := completeStoreAction(action, sn.RevOpts, opts.Flags.IgnoreValidation, enforcedSets); err != nil {
 			return nil, err
 		}
 
@@ -308,7 +331,7 @@ func (s *storeInstallGoal) toInstall(ctx context.Context, st *state.State, opts 
 			channel = sn.RevOpts.Channel
 		}
 
-		comps, err := requestedComponentsFromActionResult(sn, r)
+		comps, err := componentTargetsFromActionResult(r, sn.Components)
 		if err != nil {
 			return nil, fmt.Errorf("cannot extract components from snap resources: %w", err)
 		}
@@ -328,14 +351,14 @@ func (s *storeInstallGoal) toInstall(ctx context.Context, st *state.State, opts 
 	return installs, err
 }
 
-func requestedComponentsFromActionResult(sn StoreSnap, sar store.SnapActionResult) ([]ComponentSetup, error) {
+func componentTargetsFromActionResult(sar store.SnapActionResult, requested []string) ([]ComponentSetup, error) {
 	mapping := make(map[string]store.SnapResourceResult, len(sar.Resources))
 	for _, res := range sar.Resources {
 		mapping[res.Name] = res
 	}
 
-	setups := make([]ComponentSetup, 0, len(sn.Components))
-	for _, comp := range sn.Components {
+	setups := make([]ComponentSetup, 0, len(requested))
+	for _, comp := range requested {
 		res, ok := mapping[comp]
 		if !ok {
 			return nil, fmt.Errorf("cannot find component %q in snap resources", comp)
@@ -375,57 +398,65 @@ func componentSetupFromResource(name string, sar store.SnapResourceResult, info 
 	}, nil
 }
 
-func installActionForStoreTarget(t StoreSnap, opts Options, enforcedSets func() (*snapasserts.ValidationSets, error)) (*store.SnapAction, error) {
-	action := &store.SnapAction{
-		Action:       "install",
-		InstanceName: t.InstanceName,
-		Channel:      t.RevOpts.Channel,
-		Revision:     t.RevOpts.Revision,
-		CohortKey:    t.RevOpts.CohortKey,
+func completeStoreAction(action *store.SnapAction, revOpts RevisionOptions, ignoreValidation bool, enforcedSets func() (*snapasserts.ValidationSets, error)) error {
+	if action.Action == "" {
+		return errors.New("internal error: action must be set")
 	}
 
+	if action.InstanceName == "" {
+		return errors.New("internal error: instance name must be set")
+	}
+
+	action.Channel = revOpts.Channel
+	action.CohortKey = revOpts.CohortKey
+	action.Revision = revOpts.Revision
+
 	switch {
-	case opts.Flags.IgnoreValidation:
+	case ignoreValidation:
 		// caller requested that we ignore validation sets, nothing to do
 		action.Flags = store.SnapActionIgnoreValidation
-	case len(t.RevOpts.ValidationSets) > 0:
+	case len(revOpts.ValidationSets) > 0:
 		// caller provided some validation sets, nothing to do but send them
 		// to the store
-		action.ValidationSets = t.RevOpts.ValidationSets
+		action.ValidationSets = revOpts.ValidationSets
 	default:
 		vsets, err := enforcedSets()
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		// if the caller didn't provide any validation sets, make sure that
 		// the snap is allowed by all of the enforced validation sets
-		invalidSets, err := vsets.CheckPresenceInvalid(naming.Snap(t.InstanceName))
+		invalidSets, err := vsets.CheckPresenceInvalid(naming.Snap(action.InstanceName))
 		if err != nil {
 			if _, ok := err.(*snapasserts.PresenceConstraintError); !ok {
-				return nil, err
+				return err
 			} // else presence is optional or required, carry on
 		}
 
 		if len(invalidSets) > 0 {
-			return nil, fmt.Errorf(
-				"cannot install snap %q due to enforcing rules of validation set %s",
-				t.InstanceName, snapasserts.ValidationSetKeySlice(invalidSets).CommaSeparated(),
+			verb := "install"
+			if action.Action == "refresh" {
+				verb = "update"
+			}
+
+			return fmt.Errorf(
+				"cannot %s snap %q due to enforcing rules of validation set %s",
+				verb,
+				action.InstanceName,
+				snapasserts.ValidationSetKeySlice(invalidSets).CommaSeparated(),
 			)
 		}
 
-		requiredSets, requiredRev, err := vsets.CheckPresenceRequired(naming.Snap(t.InstanceName))
+		requiredSets, requiredRev, err := vsets.CheckPresenceRequired(naming.Snap(action.InstanceName))
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		// make sure that the caller-requested revision matches the revision
 		// required by the enforced validation sets
-		if !requiredRev.Unset() && !t.RevOpts.Revision.Unset() && requiredRev != t.RevOpts.Revision {
-			return nil, fmt.Errorf(
-				"cannot install snap %q at requested revision %s without --ignore-validation, revision %s required by validation sets: %s",
-				t.InstanceName, t.RevOpts.Revision, requiredRev, snapasserts.ValidationSetKeySlice(requiredSets).CommaSeparated(),
-			)
+		if !requiredRev.Unset() && !revOpts.Revision.Unset() && requiredRev != revOpts.Revision {
+			return invalidRevisionError(action, requiredSets, revOpts.Revision, requiredRev)
 		}
 
 		// TODO: handle validation sets and components here
@@ -450,7 +481,26 @@ func installActionForStoreTarget(t StoreSnap, opts Options, enforcedSets func() 
 		action.Channel = ""
 	}
 
-	return action, nil
+	return nil
+}
+
+func invalidRevisionError(a *store.SnapAction, sets []snapasserts.ValidationSetKey, requested, required snap.Revision) error {
+	verb := "install"
+	preposition := "at"
+	if a.Action == "refresh" {
+		verb = "update"
+		preposition = "to"
+	}
+
+	return fmt.Errorf(
+		"cannot %s snap %q %s revision %s without --ignore-validation, revision %s is required by validation sets: %s",
+		verb,
+		a.InstanceName,
+		preposition,
+		requested,
+		required,
+		snapasserts.ValidationSetKeySlice(sets).CommaSeparated(),
+	)
 }
 
 func (s *storeInstallGoal) validateAndPrune(installedSnaps map[string]*SnapState) error {
@@ -460,7 +510,7 @@ func (s *storeInstallGoal) validateAndPrune(installedSnaps map[string]*SnapState
 			return fmt.Errorf("invalid instance name: %v", err)
 		}
 
-		if err := validateRevisionOpts(t.RevOpts); err != nil {
+		if err := validateRevisionOpts(&t.RevOpts); err != nil {
 			return fmt.Errorf("invalid revision options for snap %q: %w", t.InstanceName, err)
 		}
 
@@ -515,10 +565,6 @@ func InstallOne(ctx context.Context, st *state.State, goal InstallGoal, opts Opt
 // TODO: rename this to Install once the API is settled, and we can rename or
 // remove the old Install function.
 func InstallWithGoal(ctx context.Context, st *state.State, goal InstallGoal, opts Options) ([]*snap.Info, []*state.TaskSet, error) {
-	if opts.PrereqTracker == nil {
-		opts.PrereqTracker = snap.SimplePrereqTracker{}
-	}
-
 	// can only specify a lane when running multiple operations transactionally
 	if opts.Flags.Transaction != client.TransactionAllSnaps && opts.Flags.Lane != 0 {
 		return nil, nil, errors.New("cannot specify a lane without setting transaction to \"all-snaps\"")
@@ -597,11 +643,21 @@ func InstallWithGoal(ctx context.Context, st *state.State, goal InstallGoal, opt
 	return infos, tasksets, nil
 }
 
+// generateLane returns the lane to use for the tasks that all operate on a
+// single snap. If the transaction is set to "all-snaps", then the lane is
+// explicitly set to the lane provided in the options. If the transaction is set
+// to "per-snap", then a new lane is generated for this snap. If the transaction
+// is not set, then no lane (lane 0) is used.
+//
+// TODO: It might be good to consider eliminating the usage of an empty string
+// for transactions, and make "per-snap" be the default in that case. There are
+// some inconsistencies with how various Install/Update functions handle the
+// empty string. For example, UpdateMany and InstallMany use the empty string to
+// mean "per-snap", but Install uses the empty string to mean "no lane".
+// Currently, UpdateWithGoal and InstallWithGoal both use the empty string to
+// mean "no lane", and places that implicitly used the empty string as
+// "per-snap" have been changed to use "per-snap" explicitly.
 func generateLane(st *state.State, opts Options) int {
-	// If transactional, use a single lane for all snaps, so when
-	// one fails the changes for all affected snaps will be
-	// undone. Otherwise, have different lanes per snap so failures
-	// only affect the culprit snap.
 	switch opts.Flags.Transaction {
 	case client.TransactionAllSnaps:
 		return opts.Flags.Lane
@@ -618,7 +674,15 @@ func setDefaultSnapstateOptions(st *state.State, opts *Options) error {
 	} else {
 		opts.DeviceCtx, err = DevicePastSeeding(st, opts.DeviceCtx)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+
+	if opts.PrereqTracker == nil {
+		opts.PrereqTracker = snap.SimplePrereqTracker{}
+	}
+
+	return nil
 }
 
 // pathInstallGoal represents a single snap to be installed from a path on disk.
@@ -670,7 +734,7 @@ func (p *pathInstallGoal) toInstall(ctx context.Context, st *state.State, opts O
 		return nil, fmt.Errorf("invalid instance name: %v", err)
 	}
 
-	if err := validateRevisionOpts(p.revOpts); err != nil {
+	if err := validateRevisionOpts(&p.revOpts); err != nil {
 		return nil, fmt.Errorf("invalid revision options for snap %q: %w", p.instanceName, err)
 	}
 
@@ -753,4 +817,468 @@ func validatedComponentInfo(path string, si *snap.Info, csi *snap.ComponentSideI
 		return nil, err
 	}
 	return componentInfo, nil
+}
+
+// UpdateSummary contains the data that describes an update, including a list of
+// Target structs that represent the snaps that are to be updated.
+type UpdateSummary struct {
+	// Requested is the list of snaps that were requested to be updated. If
+	// RefreshAll is true, then this list should be empty.
+	Requested []string
+	// RefreshAll is true if all snaps on the system are being refreshed (could
+	// be either an auto-refresh or something like a manual "snap refresh").
+	// This mostly has the effect of ignoring some some non-fatal errors.
+	RefreshAll bool
+	// Targets is the list of snaps that are to be updated. Note that this list
+	// does not necessarily match the list of snaps in Requested.
+	Targets []target
+}
+
+func (s *UpdateSummary) targetInfos() []*snap.Info {
+	infos := make([]*snap.Info, 0, len(s.Targets))
+	for _, t := range s.Targets {
+		infos = append(infos, t.info)
+	}
+	return infos
+}
+
+func (s *UpdateSummary) filter(f func(t target) (bool, error)) error {
+	filtered := s.Targets[:0]
+	for _, t := range s.Targets {
+		ok, err := f(t)
+		if err != nil {
+			return err
+		}
+
+		if ok {
+			filtered = append(filtered, t)
+		}
+	}
+	s.Targets = filtered
+	return nil
+}
+
+// UpdateGoal represents a single snap or a group of snaps to be updated.
+type UpdateGoal interface {
+	// Install returns the data needed to update the snaps.
+	toUpdate(context.Context, *state.State, Options) (UpdateSummary, error)
+}
+
+// UpdateOne is a convenience wrapper for UpdateWithGoal that ensures that a
+// single snap is being updated and unwraps the results to return a single
+// state.TaskSet. If the UpdateGoal does not request to update exactly one snap,
+// an error is returned.
+func UpdateOne(ctx context.Context, st *state.State, goal UpdateGoal, filter updateFilter, opts Options) (*state.TaskSet, error) {
+	opts.ExpectOneSnap = true
+
+	updated, uts, err := UpdateWithGoal(ctx, st, goal, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(updated) != 1 || len(uts.Refresh) != 1 {
+		return nil, ErrExpectedOneSnap
+	}
+
+	return uts.Refresh[0], nil
+}
+
+// UpdateWithGoal updates the snap/set of snaps specified by the given
+// UpdateGoal.
+func UpdateWithGoal(ctx context.Context, st *state.State, goal UpdateGoal, filter updateFilter, opts Options) ([]string, *UpdateTaskSets, error) {
+	if err := setDefaultSnapstateOptions(st, &opts); err != nil {
+		return nil, nil, err
+	}
+
+	if opts.ExpectOneSnap && opts.Flags.IsAutoRefresh {
+		return nil, nil, errors.New("internal error: auto-refresh is not supported when updating a single snap")
+	}
+
+	// can only specify a lane when running multiple operations transactionally
+	if opts.Flags.Transaction != client.TransactionAllSnaps && opts.Flags.Lane != 0 {
+		return nil, nil, errors.New("cannot specify a lane without setting transaction to \"all-snaps\"")
+	}
+
+	summary, err := goal.toUpdate(ctx, st, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if opts.ExpectOneSnap && len(summary.Targets) != 1 {
+		return nil, nil, ErrExpectedOneSnap
+	}
+
+	if filter != nil {
+		summary.filter(func(t target) (bool, error) {
+			return filter(t.info, &t.snapst), nil
+		})
+	}
+
+	if err := filterHeldSnapsInSummary(st, &summary, opts.Flags.IsAutoRefresh); err != nil {
+		return nil, nil, err
+	}
+
+	// save the candidates so the auto-refresh can be continued if it's inhibited
+	// by a running snap.
+	if opts.Flags.IsAutoRefresh {
+		hints, err := refreshHintsFromCandidates(st, summary, opts.DeviceCtx)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// TODO: why not check this error?
+		updateRefreshCandidates(st, hints, summary.Requested)
+	}
+
+	// validate snaps to be refreshed against validation sets. if we are
+	// refreshing all snaps, then we filter out the snaps that cannot be
+	// validated and log them
+	if err := validateAndFilterSummaryRefreshes(st, &summary, opts); err != nil {
+		return nil, nil, err
+	}
+
+	changeKind := "refresh"
+	installInfos := make([]minimalInstallInfo, 0, len(summary.Targets))
+	for _, t := range summary.Targets {
+		installInfos = append(installInfos, installSnapInfo{t.info})
+
+		// if any of the snaps are not installed, then we should use the
+		// "install" change as the kind
+		if !t.snapst.IsInstalled() {
+			changeKind = "install"
+		}
+	}
+
+	if err := checkDiskSpace(st, changeKind, installInfos, opts.UserID, opts.PrereqTracker); err != nil {
+		return nil, nil, err
+	}
+
+	updated, uts, err := updateFromSummary(st, summary, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// ideally we wouldn't use this error type here, but the current
+	// implementations share this error type for both path and store
+	// installations
+	if opts.ExpectOneSnap && len(uts.Refresh) == 0 {
+		return nil, nil, store.ErrNoUpdateAvailable
+	}
+
+	return updated, uts, nil
+}
+
+func updateFromSummary(st *state.State, summary UpdateSummary, opts Options) ([]string, *UpdateTaskSets, error) {
+	// it is sad that we have to split up UpdateSummary like this, but doUpdate
+	// is used in places where we don't have a snap.Info, so we cannot pass an
+	// UpdateSummary to doUpdate
+	updates := make([]update, 0, len(summary.Targets))
+	for _, t := range summary.Targets {
+		opts.PrereqTracker.Add(t.info)
+
+		snapsup, compsups, err := t.setups(st, opts)
+		if err != nil {
+			if !summary.RefreshAll {
+				return nil, nil, err
+			}
+
+			logger.Noticef("cannot refresh snap %q: %v", t.info.InstanceName(), err)
+			continue
+		}
+
+		updates = append(updates, update{
+			Setup:      snapsup,
+			SnapState:  t.snapst,
+			Components: compsups,
+		})
+	}
+
+	updated, uts, err := doPotentiallySplitUpdate(st, summary.Requested, updates, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// if we're only updating one snap, flatten everything into one task set
+	if opts.ExpectOneSnap && len(uts.Refresh) > 1 {
+		flat := state.NewTaskSet()
+		for _, ts := range uts.Refresh {
+			// The tasksets we get from "doUpdate" contain important "TaskEdge"
+			// information that is needed for "Remodel". To preserve those we
+			// need to use "AddAllWithEdges()".
+			if err := flat.AddAllWithEdges(ts); err != nil {
+				return nil, nil, err
+			}
+		}
+		uts.Refresh = []*state.TaskSet{flat}
+	}
+
+	return updated, uts, nil
+}
+
+func validateAndFilterSummaryRefreshes(st *state.State, summary *UpdateSummary, opts Options) error {
+	if ValidateRefreshes == nil || len(summary.Targets) == 0 || opts.Flags.IgnoreValidation {
+		return nil
+	}
+
+	ignoreValidation := make(map[string]bool, len(summary.Targets))
+	for _, t := range summary.Targets {
+		if t.snapst.IgnoreValidation {
+			ignoreValidation[t.info.InstanceName()] = true
+		}
+	}
+
+	validated, err := ValidateRefreshes(st, summary.targetInfos(), ignoreValidation, opts.UserID, opts.DeviceCtx)
+	if err != nil {
+		if !summary.RefreshAll {
+			return err
+		}
+		logger.Noticef("cannot refresh some snaps: %v", err)
+	}
+
+	validatedMap := make(map[string]bool, len(validated))
+	for _, sn := range validated {
+		validatedMap[sn.InstanceName()] = true
+	}
+
+	summary.filter(func(t target) (bool, error) {
+		_, ok := validatedMap[t.info.InstanceName()]
+		return ok, nil
+	})
+
+	return nil
+}
+
+func filterHeldSnapsInSummary(st *state.State, summary *UpdateSummary, isAutoRefresh bool) error {
+	holdLevel := HoldGeneral
+	if isAutoRefresh {
+		holdLevel = HoldAutoRefresh
+	}
+
+	heldSnaps, err := HeldSnaps(st, holdLevel)
+	if err != nil {
+		return err
+	}
+
+	summary.filter(func(t target) (bool, error) {
+		_, ok := heldSnaps[t.info.InstanceName()]
+		return !ok, nil
+	})
+
+	return nil
+}
+
+// storeInstallGoal implements the UpdateGoal interface and represents a group
+// of snaps that are to be updated from the store.
+type storeUpdateGoal struct {
+	// snaps is a mapping of snap names to StoreUpdate structs.
+	snaps map[string]StoreUpdate
+}
+
+// StoreUpdate represents a snap that is to be updated from the store.
+type StoreUpdate struct {
+	// InstanceName is the instancename of snap to update.
+	InstanceName string
+	// RevOpts contains options that apply to the update of this snap.
+	RevOpts RevisionOptions
+}
+
+// StoreUpdateGoal creates a new UpdateGoal to update snaps from the store.
+func StoreUpdateGoal(snaps ...StoreUpdate) UpdateGoal {
+	mapping := make(map[string]StoreUpdate, len(snaps))
+	for _, sn := range snaps {
+		if _, ok := mapping[sn.InstanceName]; ok {
+			continue
+		}
+
+		mapping[sn.InstanceName] = sn
+	}
+
+	return &storeUpdateGoal{
+		snaps: mapping,
+	}
+}
+
+func (s *storeUpdateGoal) toUpdate(ctx context.Context, st *state.State, opts Options) (UpdateSummary, error) {
+	if opts.ExpectOneSnap && len(s.snaps) != 1 {
+		return UpdateSummary{}, ErrExpectedOneSnap
+	}
+
+	if err := validateAndInitStoreUpdates(st, s.snaps, opts); err != nil {
+		return UpdateSummary{}, err
+	}
+
+	user, err := userFromUserID(st, opts.UserID)
+	if err != nil {
+		return UpdateSummary{}, err
+	}
+
+	refreshOpts := &store.RefreshOptions{Scheduled: opts.Flags.IsAutoRefresh}
+	summary, err := refreshCandidates(ctx, st, s.snaps, user, refreshOpts, opts)
+	if err != nil {
+		return UpdateSummary{}, err
+	}
+
+	return summary, nil
+}
+
+func validateAndInitStoreUpdates(st *state.State, updates map[string]StoreUpdate, opts Options) error {
+	snapstates, err := All(st)
+	if err != nil {
+		return err
+	}
+
+	for _, sn := range updates {
+		snapst, ok := snapstates[sn.InstanceName]
+		if !ok {
+			return snap.NotInstalledError{Snap: sn.InstanceName}
+		}
+
+		// default to existing cohort key if we don't have a provided one
+		if sn.RevOpts.CohortKey == "" && !sn.RevOpts.LeaveCohort {
+			sn.RevOpts.CohortKey = snapst.CohortKey
+		}
+
+		sn.RevOpts.Channel, err = resolveChannel(sn.InstanceName, snapst.TrackingChannel, sn.RevOpts.Channel, opts.DeviceCtx)
+		if err != nil {
+			return err
+		}
+
+		// default to tracking the already tracked channel, if we don't have a
+		// provided one
+		if sn.RevOpts.Channel == "" {
+			sn.RevOpts.Channel = snapst.TrackingChannel
+		}
+
+		updates[sn.InstanceName] = sn
+	}
+
+	return nil
+}
+
+// PathUpdate represents a single snap to be updated from a path on disk.
+type PathUpdate struct {
+	// Path is the path to the snap on disk.
+	Path string
+	// InstanceName is the name of the snap to update.
+	InstanceName string
+	// RevOpts contains options that apply to the update of this snap.
+	RevOpts RevisionOptions
+	// SideInfo contains extra information about the snap.
+	SideInfo *snap.SideInfo
+	// Components is a mapping of component side infos to paths that should be
+	// updated alongside this snap.
+	Components map[*snap.ComponentSideInfo]string
+}
+
+// pathUpdateGoal implements the UpdateGoal interface and represents a group of
+// snaps that are to be updated from paths on disk.
+type pathUpdateGoal struct {
+	updates []PathUpdate
+}
+
+// PathUpdateGoal creates a new UpdateGoal to update snaps from paths on disk.
+func PathUpdateGoal(snaps ...PathUpdate) UpdateGoal {
+	seen := make(map[string]bool)
+	filtered := make([]PathUpdate, 0, len(snaps))
+	for _, snap := range snaps {
+		if snap.InstanceName == "" {
+			snap.InstanceName = snap.SideInfo.RealName
+		}
+
+		if seen[snap.InstanceName] {
+			continue
+		}
+
+		seen[snap.InstanceName] = true
+		filtered = append(filtered, snap)
+	}
+
+	return &pathUpdateGoal{
+		updates: filtered,
+	}
+}
+
+func (p *pathUpdateGoal) toUpdate(_ context.Context, st *state.State, opts Options) (UpdateSummary, error) {
+	targets := make([]target, 0, len(p.updates))
+	names := make([]string, 0, len(p.updates))
+
+	for _, sn := range p.updates {
+		var snapst SnapState
+		if err := Get(st, sn.InstanceName, &snapst); err != nil && !errors.Is(err, state.ErrNoState) {
+			return UpdateSummary{}, err
+		}
+
+		t, err := targetForPathUpdate(sn, snapst, opts)
+		if err != nil {
+			return UpdateSummary{}, err
+		}
+
+		targets = append(targets, t)
+		names = append(names, sn.InstanceName)
+	}
+
+	return UpdateSummary{
+		Targets:   targets,
+		Requested: names,
+	}, nil
+}
+
+func targetForPathUpdate(update PathUpdate, snapst SnapState, opts Options) (target, error) {
+	si := update.SideInfo
+
+	if si.RealName == "" {
+		return target{}, fmt.Errorf("internal error: snap name to install %q not provided", update.Path)
+	}
+
+	if si.SnapID != "" {
+		if si.Revision.Unset() {
+			return target{}, fmt.Errorf("internal error: snap id set to install %q but revision is unset", update.Path)
+		}
+	}
+
+	if err := snap.ValidateInstanceName(update.InstanceName); err != nil {
+		return target{}, fmt.Errorf("invalid instance name: %v", err)
+	}
+
+	if err := validateRevisionOpts(&update.RevOpts); err != nil {
+		return target{}, fmt.Errorf("invalid revision options for snap %q: %w", update.InstanceName, err)
+	}
+
+	if !update.RevOpts.Revision.Unset() && update.RevOpts.Revision != si.Revision {
+		return target{}, fmt.Errorf("cannot install local snap %q: %v != %v (revision mismatch)", update.InstanceName, update.RevOpts.Revision, si.Revision)
+	}
+
+	info, err := validatedInfoFromPathAndSideInfo(update.InstanceName, update.Path, si)
+	if err != nil {
+		return target{}, err
+	}
+
+	snapName, instanceKey := snap.SplitInstanceName(update.InstanceName)
+	if info.SnapName() != snapName {
+		return target{}, fmt.Errorf("cannot install snap %q, the name does not match the metadata %q", update.InstanceName, info.SnapName())
+	}
+	info.InstanceKey = instanceKey
+
+	var trackingChannel string
+	if snapst.IsInstalled() {
+		trackingChannel = snapst.TrackingChannel
+	}
+
+	channel, err := resolveChannel(update.InstanceName, trackingChannel, update.RevOpts.Channel, opts.DeviceCtx)
+	if err != nil {
+		return target{}, err
+	}
+
+	// TODO: handle components here
+
+	return target{
+		setup: SnapSetup{
+			SnapPath:  update.Path,
+			Channel:   channel,
+			CohortKey: update.RevOpts.CohortKey,
+		},
+		info:       info,
+		snapst:     snapst,
+		components: nil,
+	}, nil
 }
