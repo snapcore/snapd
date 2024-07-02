@@ -348,7 +348,7 @@ func createSystemForModelFromValidatedSnaps(model *asserts.Model, label string, 
 				return recoverySystemDir, fmt.Errorf("internal error: no assertions for asserted snap with ID: %v", info.SnapID)
 			}
 		}
-		if err := w.SetInfo(sn, info); err != nil {
+		if err := w.SetInfo(sn, info, nil); err != nil {
 			return recoverySystemDir, err
 		}
 		localARefs[sn] = aRefs

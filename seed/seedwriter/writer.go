@@ -66,15 +66,25 @@ func (opts *Options) manifest() *Manifest {
 	return opts.Manifest
 }
 
-// OptionsSnap represents an options-referred snap with its option values.
-// E.g. a snap passed to ubuntu-image via --snap.
-// If Name is set the snap is from the store. If Path is set the snap
-// is local at Path location.
+// OptionsComponent represents an options-referred snap with its option values.
+// E.g. a component passed to ubuntu-image via --comp <snap_name>+<comp_name>.
+type OptionsComponent struct {
+	Name string
+	// Path is set when a file is passed around.
+	Path string
+}
+
+// OptionsSnap represents an options-referred snap with its option values. E.g.
+// a snap passed to ubuntu-image via --snap. If Name is set the snap is from
+// the store. If Path is set the snap is local at Path location. Components are
+// the components passed via the --comp option. If there is a component option
+// but no matching snap option, an implicit OptionsSnap is created.
 type OptionsSnap struct {
-	Name    string
-	SnapID  string
-	Path    string
-	Channel string
+	Name       string
+	SnapID     string
+	Path       string
+	Channel    string
+	Components []OptionsComponent
 }
 
 func (s *OptionsSnap) SnapName() string {
@@ -83,6 +93,19 @@ func (s *OptionsSnap) SnapName() string {
 
 func (s *OptionsSnap) ID() string {
 	return s.SnapID
+}
+
+func (s *OptionsSnap) Component(compName string) *OptionsComponent {
+	for _, optComp := range s.Components {
+		if optComp.Name == compName {
+			return &optComp
+		}
+	}
+	return nil
+}
+
+func (s *OptionsSnap) HasComponent(compName string) bool {
+	return s.Component(compName) != nil
 }
 
 var _ naming.SnapRef = (*OptionsSnap)(nil)
@@ -105,6 +128,16 @@ type SeedSnap struct {
 	local      bool
 	modelSnap  *asserts.ModelSnap
 	optionSnap *OptionsSnap
+
+	Components []SeedComponent
+}
+
+// SeedComponent holds details of a component being added to a seed.
+type SeedComponent struct {
+	naming.ComponentRef
+	Path string
+
+	Info *snap.ComponentInfo
 }
 
 func (sn *SeedSnap) modes() []string {
@@ -252,8 +285,10 @@ type tree interface {
 	mkFixedDirs() error
 
 	snapPath(*SeedSnap) (string, error)
+	componentPath(*SeedSnap, *SeedComponent) (string, error)
 
 	localSnapPath(*SeedSnap) (string, error)
+	localComponentPath(*SeedComponent) (string, error)
 
 	writeAssertions(db asserts.RODatabase, modelRefs []*asserts.Ref, snapsFromModel []*SeedSnap, extraSnaps []*SeedSnap) error
 
@@ -380,6 +415,26 @@ func (w *Writer) warningf(format string, a ...interface{}) {
 	w.warnings = append(w.warnings, fmt.Sprintf(format, a...))
 }
 
+func validateComponent(optComp *OptionsComponent) error {
+	if optComp.Name != "" {
+		if optComp.Path != "" {
+			return fmt.Errorf("cannot specify both name and path for component %q",
+				optComp.Name)
+		}
+		if err := snap.ValidateName(optComp.Name); err != nil {
+			return err
+		}
+	} else {
+		if !strings.HasSuffix(optComp.Path, ".comp") {
+			return fmt.Errorf("local option component %q does not end in .comp", optComp.Path)
+		}
+		if !osutil.FileExists(optComp.Path) {
+			return fmt.Errorf("local option component %q does not exist", optComp.Path)
+		}
+	}
+	return nil
+}
+
 // SetOptionsSnaps accepts options-referred snaps represented as OptionsSnap.
 func (w *Writer) SetOptionsSnaps(optSnaps []*OptionsSnap) error {
 	if err := w.checkStep(setOptionsSnapsStep); err != nil {
@@ -428,6 +483,11 @@ func (w *Writer) SetOptionsSnaps(optSnaps []*OptionsSnap) error {
 				return fmt.Errorf("cannot use option channel for snap %q: %v", whichSnap, err)
 			}
 			if err := w.policy.checkSnapChannel(ch, whichSnap); err != nil {
+				return err
+			}
+		}
+		for _, comp := range sn.Components {
+			if err := validateComponent(&comp); err != nil {
 				return err
 			}
 		}
@@ -655,13 +715,14 @@ func (w *Writer) InfoDerived() error {
 
 // SetInfo sets Info of the SeedSnap and possibly computes its
 // destination Path.
-func (w *Writer) SetInfo(sn *SeedSnap, info *snap.Info) error {
+func (w *Writer) SetInfo(sn *SeedSnap, info *snap.Info, seedComps []SeedComponent) error {
 	if info.NeedsDevMode() {
 		if err := w.policy.allowsDangerousFeatures(); err != nil {
 			return err
 		}
 	}
 	sn.Info = info
+	sn.Components = seedComps
 
 	if sn.local {
 		sn.SnapRef = info
@@ -727,11 +788,22 @@ func (w *Writer) modelSnapToSeed(modSnap *asserts.ModelSnap) (*SeedSnap, error) 
 			// by an OptionsSnap entry is skipped
 			return nil, errSkipOptional
 		}
+		seedComps := make([]SeedComponent, 0, len(modSnap.Components))
+		for comp, modComp := range modSnap.Components {
+			// optional snap not confirmed, skipping
+			if modComp.Presence == "optional" && optSnap != nil && !optSnap.HasComponent(comp) {
+				continue
+			}
+			seedComps = append(seedComps, SeedComponent{
+				ComponentRef: naming.NewComponentRef(modSnap.Name, comp),
+			})
+		}
 		sn = &SeedSnap{
 			SnapRef: modSnap,
 
 			local:      false,
 			optionSnap: optSnap,
+			Components: seedComps,
 		}
 	} else {
 		optSnap = sn.optionSnap
@@ -1457,12 +1529,17 @@ func (w *Writer) SeedSnaps(copySnap func(name, src, dst string) error) error {
 				}
 			} else {
 				var snapPath func(*SeedSnap) (string, error)
+				var compPath func(*SeedComponent) (string, error)
 				if sn.Info.ID() != "" {
 					// actually asserted
 					snapPath = w.tree.snapPath
+					compPath = func(sc *SeedComponent) (string, error) {
+						return w.tree.componentPath(sn, sc)
+					}
 				} else {
 					// purely local
 					snapPath = w.tree.localSnapPath
+					compPath = w.tree.localComponentPath
 				}
 				dst, err := snapPath(sn)
 				if err != nil {
@@ -1470,6 +1547,16 @@ func (w *Writer) SeedSnaps(copySnap func(name, src, dst string) error) error {
 				}
 				if err := copySnap(info.SnapName(), sn.Path, dst); err != nil {
 					return err
+				}
+				// copy components
+				for _, comp := range sn.Components {
+					compDst, err := compPath(&comp)
+					if err != nil {
+						return err
+					}
+					if err := copySnap(comp.ComponentRef.String(), comp.Path, compDst); err != nil {
+						return err
+					}
 				}
 				// record final destination path
 				sn.Path = dst
