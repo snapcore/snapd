@@ -147,6 +147,7 @@ var (
 	snapstateUpdate                         = snapstate.Update
 	snapstateUpdateMany                     = snapstate.UpdateMany
 	snapstateInstallMany                    = snapstate.InstallMany
+	snapstateRemove                         = snapstate.Remove
 	snapstateRemoveMany                     = snapstate.RemoveMany
 	snapstateResolveValSetsEnforcementError = snapstate.ResolveValidationSetsEnforcementError
 	snapstateRevert                         = snapstate.Revert
