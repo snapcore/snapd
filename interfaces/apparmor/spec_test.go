@@ -605,3 +605,66 @@ func (s *specSuite) TestSetSuppressPycacheDeny(c *C) {
 	s.spec.SetSuppressPycacheDeny()
 	c.Assert(s.spec.SuppressPycacheDeny(), Equals, true)
 }
+
+var key1 = apparmor.RegisterSnippetKey("testkey1")
+var key2 = apparmor.RegisterSnippetKey("testkey2")
+
+func (s *specSuite) TestPrioritySnippets(c *C) {
+	restore := apparmor.SetSpecScope(s.spec, []string{"snap.demo.scope1"})
+
+	// Test a scope with a normal snippet and prioritized ones
+	s.spec.AddSnippet("Test snippet 1")
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 1", key1, 0)
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 2", key1, 0)
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 3", key2, 1)
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 4", key2, 2)
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 5", key2, 0)
+
+	restore()
+
+	// Test a scope with only prioritized snippets
+	restore = apparmor.SetSpecScope(s.spec, []string{"snap.demo.scope2"})
+	defer restore()
+
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 6", key1, 0)
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 7", key1, 0)
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 8", key2, 1)
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 9", key2, 2)
+	s.spec.AddPrioritizedSnippet("Prioritized snippet 10", key2, 0)
+
+	snippets := s.spec.SnippetForTag("snap.demo.scope1")
+	c.Assert(snippets, testutil.Contains, "Test snippet 1")
+	c.Assert(snippets, testutil.Contains, "Prioritized snippet 1")
+	c.Assert(snippets, testutil.Contains, "Prioritized snippet 2")
+	c.Assert(snippets, Not(testutil.Contains), "Prioritized snippet 3")
+	c.Assert(snippets, testutil.Contains, "Prioritized snippet 4")
+	c.Assert(snippets, Not(testutil.Contains), "Prioritized snippet 5")
+
+	snippets = s.spec.SnippetForTag("snap.demo.scope2")
+	c.Assert(snippets, testutil.Contains, "Prioritized snippet 6")
+	c.Assert(snippets, testutil.Contains, "Prioritized snippet 7")
+	c.Assert(snippets, Not(testutil.Contains), "Prioritized snippet 8")
+	c.Assert(snippets, testutil.Contains, "Prioritized snippet 9")
+	c.Assert(snippets, Not(testutil.Contains), "Prioritized snippet 10")
+
+	tags := s.spec.SecurityTags()
+	c.Assert(tags, testutil.Contains, "snap.demo.scope1")
+	c.Assert(tags, testutil.Contains, "snap.demo.scope2")
+}
+
+func (s *specSuite) TestPrioritySnippetsNoRegisteredKey(c *C) {
+	var key1 apparmor.SnippetKey = apparmor.SnippetKey{}
+	c.Assert(func() { s.spec.AddPrioritizedSnippet("Prioritized snippet 1", key1, 0) }, PanicMatches, "priority key  is not registered")
+}
+
+func (s *specSuite) TestRegisterSameSnippetKeyTwice(c *C) {
+	c.Assert(func() { apparmor.RegisterSnippetKey("testkey1") }, PanicMatches, "priority key testkey1 is already registered")
+}
+
+func (s *specSuite) TestMoreSnippets(c *C) {
+	keylist := apparmor.GetSnippetKeys()
+	c.Assert(keylist, testutil.Contains, "testkey1")
+	c.Assert(keylist, testutil.Contains, "testkey2")
+	c.Assert(len(keylist), Equals, 2)
+
+}
