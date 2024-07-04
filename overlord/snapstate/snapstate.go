@@ -2117,6 +2117,7 @@ func doUpdate(ctx context.Context, st *state.State, names []string, updates []mi
 		if err != nil {
 			if refreshAll {
 				logger.Noticef("cannot update %q: %v", update.InstanceName(), err)
+				st.Warnf("cannot update %q: %v", update.InstanceName(), err)
 				continue
 			}
 			return nil, nil, err
@@ -2138,6 +2139,7 @@ func doUpdate(ctx context.Context, st *state.State, names []string, updates []mi
 			if refreshAll {
 				// doing "refresh all", just skip this snap
 				logger.Noticef("cannot refresh snap %q: %v", update.InstanceName(), err)
+				st.Warnf("cannot refresh %q: %v", update.InstanceName(), err)
 				continue
 			}
 			return nil, nil, err
@@ -2270,6 +2272,7 @@ func applyAutoAliasesDelta(st *state.State, delta map[string][]string, op string
 			if refreshAll {
 				// doing "refresh all", just skip this snap
 				logger.Noticef("cannot %s automatic aliases for snap %q: %v", op, instanceName, err)
+				st.Warnf("cannot %s automatic aliases for snap %q: %v", op, instanceName, err)
 				continue
 			}
 			return nil, err
