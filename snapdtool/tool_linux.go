@@ -204,9 +204,11 @@ func ExecInSnapdOrCoreSnap() {
 
 	// Is this executable in the core snap too?
 	coreOrSnapdPath := snapdSnap
+	origin := "snapd from snap"
 	full := filepath.Join(snapdSnap, exe)
 	if !osutil.FileExists(full) {
 		coreOrSnapdPath = coreSnap
+		origin = "snapd from core"
 		full = filepath.Join(coreSnap, exe)
 		if !osutil.FileExists(full) {
 			return
@@ -215,9 +217,10 @@ func ExecInSnapdOrCoreSnap() {
 
 	// If the core snap doesn't support re-exec or run-from-core then don't do it.
 	if !systemSnapSupportsReExec(coreOrSnapdPath) {
+		logger.Noticef(">>>>>> %s does not support re-exec", origin)
 		return
 	}
-
+	logger.Noticef(">>>>>>> restarting into %s (%q)", origin, full)
 	logger.Debugf("restarting into %q", full)
 	panic(syscallExec(full, os.Args, os.Environ()))
 }
