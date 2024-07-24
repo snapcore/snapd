@@ -13733,14 +13733,6 @@ func (s *snapmgrTestSuite) TestUpdateWithComponentsBackToPrevRevision(c *C) {
 
 	sort.Strings(components)
 
-	compNameToType := func(name string) snap.ComponentType {
-		typ := strings.TrimSuffix(name, "-component")
-		if typ == name {
-			c.Fatalf("unexpected component name %q", name)
-		}
-		return snap.ComponentType(typ)
-	}
-
 	s.fakeStore.snapResourcesFn = func(info *snap.Info) []store.SnapResourceResult {
 		c.Fatalf("unexpected call to snapResourcesFn")
 		return nil
@@ -13793,7 +13785,7 @@ func (s *snapmgrTestSuite) TestUpdateWithComponentsBackToPrevRevision(c *C) {
 
 		err := seq.AddComponentForRevision(prevSnapRev, &sequence.ComponentState{
 			SideInfo: &prevCsi,
-			CompType: compNameToType(comp),
+			CompType: componentNameToType(c, comp),
 		})
 		c.Assert(err, IsNil)
 
@@ -13803,7 +13795,7 @@ func (s *snapmgrTestSuite) TestUpdateWithComponentsBackToPrevRevision(c *C) {
 		}
 		err = seq.AddComponentForRevision(currentSnapRev, &sequence.ComponentState{
 			SideInfo: &currentCsi,
-			CompType: compNameToType(comp),
+			CompType: componentNameToType(c, comp),
 		})
 		c.Assert(err, IsNil)
 
@@ -13818,7 +13810,7 @@ func (s *snapmgrTestSuite) TestUpdateWithComponentsBackToPrevRevision(c *C) {
 	) (*snap.ComponentInfo, error) {
 		return &snap.ComponentInfo{
 			Component:         csi.Component,
-			Type:              compNameToType(csi.Component.ComponentName),
+			Type:              componentNameToType(c, csi.Component.ComponentName),
 			Version:           "1.0",
 			ComponentSideInfo: *csi,
 		}, nil
@@ -14024,6 +14016,14 @@ func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThroughInstanceKeyUndo(c *
 	s.testUpdateWithComponentsRunThrough(c, instanceKey, []string{"test-component", "kernel-modules-component"}, refreshAppAwarenessUX, undo)
 }
 
+func componentNameToType(c *C, name string) snap.ComponentType {
+	typ := strings.TrimSuffix(name, "-component")
+	if typ == name {
+		c.Fatalf("unexpected component name %q", name)
+	}
+	return snap.ComponentType(typ)
+}
+
 func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey string, components []string, refreshAppAwarenessUX, undo bool) {
 	if refreshAppAwarenessUX {
 		s.enableRefreshAppAwarenessUX()
@@ -14041,14 +14041,6 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 
 	sort.Strings(components)
 
-	compNameToType := func(name string) snap.ComponentType {
-		typ := strings.TrimSuffix(name, "-component")
-		if typ == name {
-			c.Fatalf("unexpected component name %q", name)
-		}
-		return snap.ComponentType(typ)
-	}
-
 	s.fakeStore.snapResourcesFn = func(info *snap.Info) []store.SnapResourceResult {
 		c.Assert(info.InstanceName(), DeepEquals, instanceName)
 		var results []store.SnapResourceResult
@@ -14059,7 +14051,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 				},
 				Name:      compName,
 				Revision:  i + 2,
-				Type:      fmt.Sprintf("component/%s", compNameToType(compName)),
+				Type:      fmt.Sprintf("component/%s", componentNameToType(c, compName)),
 				Version:   "1.0",
 				CreatedAt: "2024-01-01T00:00:00Z",
 			})
@@ -14110,7 +14102,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 				Component: naming.NewComponentRef(snapName, comp),
 				Revision:  snap.R(i + 1),
 			},
-			CompType: compNameToType(comp),
+			CompType: componentNameToType(c, comp),
 		})
 		c.Assert(err, IsNil)
 	}
@@ -14120,7 +14112,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 	) (*snap.ComponentInfo, error) {
 		return &snap.ComponentInfo{
 			Component:         csi.Component,
-			Type:              compNameToType(csi.Component.ComponentName),
+			Type:              componentNameToType(c, csi.Component.ComponentName),
 			Version:           "1.0",
 			ComponentSideInfo: *csi,
 		}, nil
@@ -14435,7 +14427,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 					Component: naming.NewComponentRef(snapName, comp),
 					Revision:  snap.R(i + 2),
 				},
-				CompType: compNameToType(comp),
+				CompType: componentNameToType(c, comp),
 			})
 		}
 
@@ -14656,14 +14648,6 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsFromPathRunThrough(c *C, inst
 
 	sort.Strings(compNames)
 
-	compNameToType := func(name string) snap.ComponentType {
-		typ, ok := strings.CutSuffix(name, "-component")
-		if !ok {
-			c.Fatalf("unexpected component name %q", name)
-		}
-		return snap.ComponentType(typ)
-	}
-
 	si := snap.SideInfo{
 		RealName: snapName,
 		Revision: currentSnapRev,
@@ -14703,7 +14687,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsFromPathRunThrough(c *C, inst
 				Component: naming.NewComponentRef(snapName, comp),
 				Revision:  snap.R(i + 1),
 			},
-			CompType: compNameToType(comp),
+			CompType: componentNameToType(c, comp),
 		})
 		c.Assert(err, IsNil)
 	}
@@ -14713,7 +14697,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsFromPathRunThrough(c *C, inst
 	) (*snap.ComponentInfo, error) {
 		return &snap.ComponentInfo{
 			Component:         csi.Component,
-			Type:              compNameToType(csi.Component.ComponentName),
+			Type:              componentNameToType(c, csi.Component.ComponentName),
 			Version:           "1.0",
 			ComponentSideInfo: *csi,
 		}, nil
@@ -14738,7 +14722,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsFromPathRunThrough(c *C, inst
 		componentYaml := fmt.Sprintf(`component: %s
 type: %s
 version: 1.0
-`, csi.Component, compNameToType(compName))
+`, csi.Component, componentNameToType(c, compName))
 
 		components[csi] = snaptest.MakeTestComponent(c, componentYaml)
 	}
@@ -14991,7 +14975,7 @@ components:
 					Component: naming.NewComponentRef(snapName, comp),
 					Revision:  snap.R(i + 2),
 				},
-				CompType: compNameToType(comp),
+				CompType: componentNameToType(c, comp),
 			})
 		}
 

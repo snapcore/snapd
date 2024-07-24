@@ -6451,14 +6451,6 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 	// we start without the auxiliary store info
 	c.Check(snapstate.AuxStoreInfoFilename(snapID), testutil.FileAbsent)
 
-	compNameToType := func(name string) snap.ComponentType {
-		typ := strings.TrimSuffix(name, "-component")
-		if typ == name {
-			c.Fatalf("unexpected component name %q", name)
-		}
-		return snap.ComponentType(typ)
-	}
-
 	s.fakeStore.snapResourcesFn = func(info *snap.Info) []store.SnapResourceResult {
 		c.Assert(info.InstanceName(), DeepEquals, instanceName)
 		var results []store.SnapResourceResult
@@ -6469,7 +6461,7 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 				},
 				Name:      compName,
 				Revision:  i + 1,
-				Type:      fmt.Sprintf("component/%s", compNameToType(compName)),
+				Type:      fmt.Sprintf("component/%s", componentNameToType(c, compName)),
 				Version:   "1.0",
 				CreatedAt: "2024-01-01T00:00:00Z",
 			})
@@ -6713,7 +6705,7 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 					Component: naming.NewComponentRef(snapName, compName),
 					Revision:  snap.R(i + 1),
 				},
-				CompType: compNameToType(compName),
+				CompType: componentNameToType(c, compName),
 			})
 		}
 
@@ -6806,14 +6798,6 @@ func (s *snapmgrTestSuite) testInstallComponentsFromPathRunThrough(c *C, snapNam
 	snapRevision := snap.R(11)
 	instanceName := snap.InstanceName(snapName, instanceKey)
 
-	compNameToType := func(name string) snap.ComponentType {
-		typ := strings.TrimSuffix(name, "-component")
-		if typ == name {
-			c.Fatalf("unexpected component name %q", name)
-		}
-		return snap.ComponentType(typ)
-	}
-
 	components := make(map[*snap.ComponentSideInfo]string, len(compNames))
 	for i, compName := range compNames {
 		csi := &snap.ComponentSideInfo{
@@ -6824,7 +6808,7 @@ func (s *snapmgrTestSuite) testInstallComponentsFromPathRunThrough(c *C, snapNam
 		componentYaml := fmt.Sprintf(`component: %s
 type: %s
 version: 1.0
-`, csi.Component, compNameToType(compName))
+`, csi.Component, componentNameToType(c, compName))
 
 		components[csi] = snaptest.MakeTestComponent(c, componentYaml)
 	}
@@ -7004,7 +6988,7 @@ components:
 					Component: naming.NewComponentRef(snapName, compName),
 					Revision:  snap.R(i + 1),
 				},
-				CompType: compNameToType(compName),
+				CompType: componentNameToType(c, compName),
 			})
 		}
 
