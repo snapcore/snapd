@@ -30,6 +30,7 @@ import (
 	"github.com/snapcore/snapd/overlord/configstate/config"
 	"github.com/snapcore/snapd/overlord/snapstate"
 	"github.com/snapcore/snapd/overlord/state"
+	"github.com/snapcore/snapd/strutil"
 )
 
 func init() {
@@ -40,6 +41,12 @@ func init() {
 	snapstate.SetupRemoveHook = SetupRemoveHook
 	snapstate.SetupGateAutoRefreshHook = SetupGateAutoRefreshHook
 }
+
+var (
+	ViewChangedHandlerGenerator    func(context *Context) Handler
+	SaveRegistryHandlerGenerator   func(context *Context) Handler
+	ChangeRegistryHandlerGenerator func(context *Context) Handler
+)
 
 func SetupInstallHook(st *state.State, snapName string) *state.Task {
 	hooksup := &HookSetup{
@@ -303,20 +310,11 @@ func SetupGateAutoRefreshHook(st *state.State, snapName string) *state.Task {
 	return task
 }
 
-type snapHookHandler struct {
-}
+type SnapHookHandler struct{}
 
-func (h *snapHookHandler) Before() error {
-	return nil
-}
-
-func (h *snapHookHandler) Done() error {
-	return nil
-}
-
-func (h *snapHookHandler) Error(err error) (bool, error) {
-	return false, nil
-}
+func (h *SnapHookHandler) Before() error                 { return nil }
+func (h *SnapHookHandler) Done() error                   { return nil }
+func (h *SnapHookHandler) Error(err error) (bool, error) { return false, nil }
 
 func SetupRemoveHook(st *state.State, snapName string) *state.Task {
 	hooksup := &HookSetup{
@@ -332,9 +330,18 @@ func SetupRemoveHook(st *state.State, snapName string) *state.Task {
 	return task
 }
 
+type MultiplexHandler struct {
+	SnapHookHandler
+	Ctx *Context
+}
+
+func (h *MultiplexHandler) Multiplex() []string {
+	return strutil.CommaSeparatedList(h.Ctx.setup.Snap)
+}
+
 func setupHooks(hookMgr *HookManager) {
 	handlerGenerator := func(context *Context) Handler {
-		return &snapHookHandler{}
+		return &SnapHookHandler{}
 	}
 	gateAutoRefreshHandlerGenerator := func(context *Context) Handler {
 		return NewGateAutoRefreshHookHandler(context)
@@ -345,4 +352,7 @@ func setupHooks(hookMgr *HookManager) {
 	hookMgr.Register(regexp.MustCompile("^pre-refresh$"), handlerGenerator)
 	hookMgr.Register(regexp.MustCompile("^remove$"), handlerGenerator)
 	hookMgr.Register(regexp.MustCompile("^gate-auto-refresh$"), gateAutoRefreshHandlerGenerator)
+	hookMgr.Register(regexp.MustCompile("^.+-view-changed$"), ViewChangedHandlerGenerator)
+	hookMgr.Register(regexp.MustCompile("^change-registry$"), ChangeRegistryHandlerGenerator)
+	hookMgr.Register(regexp.MustCompile("^save-registry$"), SaveRegistryHandlerGenerator)
 }

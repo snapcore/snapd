@@ -77,6 +77,10 @@ func (s *unsetCommand) Execute(args []string) error {
 		return nil
 	}
 
+	if !context.IsEphemeral() && context.HookName() != "change-registry" {
+		return fmt.Errorf("cannot modify registry data in non \"change-registry\" hook: %s", context.HookName())
+	}
+
 	// unsetting registry data
 	if !strings.HasPrefix(s.Positional.ConfKeys[0], ":") {
 		return fmt.Errorf(i18n.G("cannot unset registry: plug must conform to format \":<plug-name>\": %s"), s.Positional.ConfKeys[0])
