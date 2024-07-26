@@ -6671,6 +6671,25 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 		})
 	}
 
+	compsups := make([]snapstate.ComponentSetup, 0, len(components))
+	for i, comp := range components {
+		compsups = append(compsups, snapstate.ComponentSetup{
+			CompSideInfo: &snap.ComponentSideInfo{
+				Component: naming.NewComponentRef(snapName, comp),
+				Revision:  snap.R(i + 1),
+			},
+			CompType: componentNameToType(c, comp),
+			DownloadInfo: &snap.DownloadInfo{
+				DownloadURL: "http://example.com/" + comp,
+			},
+			CompPath: filepath.Join(dirs.SnapBlobDir, fmt.Sprintf("%s+%s_%d.comp", instanceName, comp, i+1)),
+			ComponentInstallFlags: snapstate.ComponentInstallFlags{
+				MultiComponentInstall: true,
+			},
+		})
+	}
+	checkComponentSetupTasks(c, ts, compsups)
+
 	// start with an easier-to-read error if this fails:
 	c.Assert(s.fakeBackend.ops.Ops(), DeepEquals, expected.Ops())
 	c.Assert(s.fakeBackend.ops, DeepEquals, expected)
@@ -6799,6 +6818,7 @@ func (s *snapmgrTestSuite) testInstallComponentsFromPathRunThrough(c *C, snapNam
 	instanceName := snap.InstanceName(snapName, instanceKey)
 
 	components := make(map[*snap.ComponentSideInfo]string, len(compNames))
+	compPaths := make(map[string]string, len(compNames))
 	for i, compName := range compNames {
 		csi := &snap.ComponentSideInfo{
 			Component: naming.NewComponentRef(snapName, compName),
@@ -6810,7 +6830,9 @@ type: %s
 version: 1.0
 `, csi.Component, componentNameToType(c, compName))
 
-		components[csi] = snaptest.MakeTestComponent(c, componentYaml)
+		path := snaptest.MakeTestComponent(c, componentYaml)
+		compPaths[csi.Component.ComponentName] = path
+		components[csi] = path
 	}
 
 	s.AddCleanup(snapstate.MockReadComponentInfo(func(
@@ -6957,6 +6979,23 @@ components:
 			revno: snapRevision,
 		})
 	}
+
+	compsups := make([]snapstate.ComponentSetup, 0, len(components))
+	for i, comp := range compNames {
+		compsups = append(compsups, snapstate.ComponentSetup{
+			CompSideInfo: &snap.ComponentSideInfo{
+				Component: naming.NewComponentRef(snapName, comp),
+				Revision:  snap.R(i + 1),
+			},
+			CompType: componentNameToType(c, comp),
+			CompPath: compPaths[comp],
+			ComponentInstallFlags: snapstate.ComponentInstallFlags{
+				MultiComponentInstall: true,
+				RemoveComponentPath:   removePaths,
+			},
+		})
+	}
+	checkComponentSetupTasks(c, ts, compsups)
 
 	c.Assert(s.fakeBackend.ops.Ops(), DeepEquals, expected.Ops())
 	c.Assert(s.fakeBackend.ops, DeepEquals, expected)

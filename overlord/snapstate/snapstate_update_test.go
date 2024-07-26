@@ -14402,6 +14402,25 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		SnapID:   snapID,
 	})
 
+	compsups := make([]snapstate.ComponentSetup, 0, len(components))
+	for i, comp := range components {
+		compsups = append(compsups, snapstate.ComponentSetup{
+			CompSideInfo: &snap.ComponentSideInfo{
+				Component: naming.NewComponentRef(snapName, comp),
+				Revision:  snap.R(i + 2),
+			},
+			CompType: componentNameToType(c, comp),
+			DownloadInfo: &snap.DownloadInfo{
+				DownloadURL: "http://example.com/" + comp,
+			},
+			CompPath: filepath.Join(dirs.SnapBlobDir, fmt.Sprintf("%s+%s_%d.comp", instanceName, comp, i+2)),
+			ComponentInstallFlags: snapstate.ComponentInstallFlags{
+				MultiComponentInstall: true,
+			},
+		})
+	}
+	checkComponentSetupTasks(c, ts, compsups)
+
 	// verify snaps in the system state
 	var snapst snapstate.SnapState
 	err = snapstate.Get(s.state, instanceName, &snapst)
@@ -14713,6 +14732,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsFromPathRunThrough(c *C, inst
 	})
 
 	components := make(map[*snap.ComponentSideInfo]string, len(compNames))
+	componentPaths := make(map[string]string, len(compNames))
 	for i, compName := range compNames {
 		csi := &snap.ComponentSideInfo{
 			Component: naming.NewComponentRef(snapName, compName),
@@ -14724,7 +14744,9 @@ type: %s
 version: 1.0
 `, csi.Component, componentNameToType(c, compName))
 
-		components[csi] = snaptest.MakeTestComponent(c, componentYaml)
+		path := snaptest.MakeTestComponent(c, componentYaml)
+		componentPaths[csi.Component.ComponentName] = path
+		components[csi] = path
 	}
 
 	snapPath := makeTestSnap(c, fmt.Sprintf(`name: %s
@@ -14950,6 +14972,23 @@ components:
 		SnapID:   snapID,
 	})
 
+	compsups := make([]snapstate.ComponentSetup, 0, len(compNames))
+	for i, comp := range compNames {
+		compsups = append(compsups, snapstate.ComponentSetup{
+			CompSideInfo: &snap.ComponentSideInfo{
+				Component: naming.NewComponentRef(snapName, comp),
+				Revision:  snap.R(i + 2),
+			},
+			CompType: componentNameToType(c, comp),
+			CompPath: componentPaths[comp],
+			ComponentInstallFlags: snapstate.ComponentInstallFlags{
+				RemoveComponentPath:   true,
+				MultiComponentInstall: true,
+			},
+		})
+	}
+	checkComponentSetupTasks(c, ts, compsups)
+
 	// verify snaps in the system state
 	var snapst snapstate.SnapState
 	err = snapstate.Get(s.state, instanceName, &snapst)
@@ -14994,4 +15033,22 @@ components:
 		c.Assert(snapst.Sequence.Revisions, HasLen, 1)
 		c.Assert(snapst.Sequence.Revisions[0], DeepEquals, seq.Revisions[0])
 	}
+}
+
+func checkComponentSetupTasks(c *C, ts *state.TaskSet, expected []snapstate.ComponentSetup) {
+	found := make([]snapstate.ComponentSetup, 0, len(expected))
+	for _, t := range ts.Tasks() {
+		if !t.Has("component-setup") {
+			continue
+		}
+
+		var compsup snapstate.ComponentSetup
+		err := t.Get("component-setup", &compsup)
+		c.Assert(err, IsNil)
+
+		found = append(found, compsup)
+	}
+
+	c.Assert(found, HasLen, len(expected))
+	c.Check(found, testutil.DeepUnsortedMatches, expected)
 }
