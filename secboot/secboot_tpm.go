@@ -286,11 +286,13 @@ func unlockEncryptedPartitionWithSealedKey(mapperName, sourceDevice, keyfile str
 		return NotUnlocked, fmt.Errorf("cannot read key data: %v", err)
 	}
 	options := activateVolOpts(allowRecovery)
+	// Ignoring model checker as it doesn't work with tpm "legacy" platform key data.
+	// TODO: In the general case anway, it is also not how the model is
+	// supposed to be provided. We should call SetModels instead.
 	options.Model = sb.SkipSnapModelCheck
-	// ignoring model checker as it doesn't work with tpm "legacy" platform key data
 	authRequestor, err := newAuthRequestor()
 	if err != nil {
-		return NotUnlocked, fmt.Errorf("cannot build an auth requestor: %v", err)
+		return NotUnlocked, fmt.Errorf("internal error: cannot build an auth requestor: %v", err)
 	}
 
 	err = sbActivateVolumeWithKeyData(mapperName, sourceDevice, authRequestor, sb.Argon2iKDF(), options, keyData)

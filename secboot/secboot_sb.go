@@ -179,7 +179,7 @@ func UnlockEncryptedVolumeWithRecoveryKey(name, device string) error {
 
 	authRequestor, err := newAuthRequestor()
 	if err != nil {
-		return fmt.Errorf("cannot build an auth requestor: %v", err)
+		return fmt.Errorf("internal error: cannot build an auth requestor: %v", err)
 	}
 
 	if err := sbActivateVolumeWithRecoveryKey(name, device, authRequestor, &options); err != nil {

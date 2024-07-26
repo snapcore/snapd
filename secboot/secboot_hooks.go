@@ -177,7 +177,7 @@ func unlockVolumeUsingSealedKeyFDERevealKeyV2(sealedEncryptionKeyFile, sourceDev
 
 	authRequestor, err := newAuthRequestor()
 	if err != nil {
-		return res, fmt.Errorf("cannot build an auth requestor: %v", err)
+		return res, fmt.Errorf("internal error: cannot build an auth requestor: %v", err)
 	}
 
 	err = sbActivateVolumeWithKeyData(mapperName, sourceDevice, authRequestor, sb.Argon2iKDF(), options, keyData)
