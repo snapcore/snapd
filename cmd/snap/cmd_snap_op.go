@@ -1398,7 +1398,7 @@ func init() {
 			// TRANSLATORS: This should not start with a lowercase letter.
 			"purge": i18n.G("Remove the snap without saving a snapshot of its data"),
 			// TRANSLATORS: This should not start with a lowercase letter.
-			"terminate": i18n.G("Kill running snap apps"),
+			"terminate": i18n.G("Terminate running application processe"),
 		}), nil)
 	addCommand("install", shortInstallHelp, longInstallHelp, func() flags.Commander { return &cmdInstall{} },
 		colorDescs.also(waitDescs).also(channelDescs).also(modeDescs).also(map[string]string{
