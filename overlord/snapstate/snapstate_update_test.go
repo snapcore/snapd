@@ -46,6 +46,7 @@ import (
 	"github.com/snapcore/snapd/overlord"
 	"github.com/snapcore/snapd/overlord/assertstate"
 	"github.com/snapcore/snapd/overlord/auth"
+	"github.com/snapcore/snapd/strutil"
 	userclient "github.com/snapcore/snapd/usersession/client"
 
 	// So it registers Configure.
@@ -14793,6 +14794,15 @@ func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThroughOnlyComponentUpdate
 	})
 }
 
+func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThroughOnlyComponentUpdateLostComponents(c *C) {
+	s.testUpdateWithComponentsRunThroughOnlyComponentUpdate(c, updateWithComponentsOpts{
+		instanceKey:           "key",
+		components:            []string{"test-component", "kernel-modules-component"},
+		postRefreshComponents: []string{"test-component"},
+		refreshAppAwarenessUX: true,
+	})
+}
+
 func (s *snapmgrTestSuite) testUpdateWithComponentsRunThroughOnlyComponentUpdate(c *C, opts updateWithComponentsOpts) {
 	if opts.refreshAppAwarenessUX {
 		s.enableRefreshAppAwarenessUX()
@@ -14826,6 +14836,13 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThroughOnlyComponentUpdate
 	updatedCompRevisions := make(map[string]snap.Revision)
 	for i, compName := range opts.components {
 		updatedCompRevisions[compName] = snap.R(i + 2)
+	}
+
+	lostComponents := make(map[string]snap.Revision)
+	for _, comp := range opts.components {
+		if !strutil.ListContains(opts.postRefreshComponents, comp) {
+			lostComponents[comp] = originalCompRevisions[comp]
+		}
 	}
 
 	compNameToType := func(name string) snap.ComponentType {
@@ -15011,9 +15028,17 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThroughOnlyComponentUpdate
 		})
 	}
 
+	for compName, rev := range lostComponents {
+		expected = append(expected, fakeOp{
+			op:   "unlink-component",
+			path: snap.ComponentMountDir(compName, rev, instanceName),
+		})
+	}
+
 	for _, cs := range expectedComponentStates {
 		compName := cs.SideInfo.Component.ComponentName
 		compRev := cs.SideInfo.Revision
+
 		containerName := fmt.Sprintf("%s+%s", instanceName, compName)
 		filename := fmt.Sprintf("%s_%v.comp", containerName, compRev)
 
@@ -15110,7 +15135,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThroughOnlyComponentUpdate
 		}
 	}
 
-	var newKmodComps []*snap.ComponentSideInfo
+	newKmodComps := make([]*snap.ComponentSideInfo, 0, len(expectedComponentStates))
 	for _, cs := range expectedComponentStates {
 		if cs.CompType == snap.KernelModulesComponent {
 			newKmodComps = append(newKmodComps, cs.SideInfo)
@@ -15125,7 +15150,26 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThroughOnlyComponentUpdate
 		})
 	}
 
-	for _, cs := range currentComponentStates {
+	expectedSideState := sequence.NewRevisionSideState(&si, expectedComponentStates)
+	originalSideState := currentSeq.Revisions[0]
+
+	var discardedComponents []*sequence.ComponentState
+	for _, cs := range expectedComponentStates {
+		// these are handled second
+		if _, ok := lostComponents[cs.SideInfo.Component.ComponentName]; ok {
+			continue
+		}
+
+		discardedComponents = append(discardedComponents, originalSideState.FindComponent(cs.SideInfo.Component))
+	}
+
+	for compName := range lostComponents {
+		discardedComponents = append(discardedComponents, originalSideState.FindComponent(
+			naming.NewComponentRef(snapName, compName),
+		))
+	}
+
+	for _, cs := range discardedComponents {
 		compName := cs.SideInfo.Component.ComponentName
 		compRev := cs.SideInfo.Revision
 		containerName := fmt.Sprintf("%s+%s", instanceName, compName)
@@ -15143,9 +15187,6 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThroughOnlyComponentUpdate
 			},
 		}...)
 	}
-
-	expectedSideState := sequence.NewRevisionSideState(&si, expectedComponentStates)
-	originalSideState := currentSeq.Revisions[0]
 
 	if opts.undo {
 		expected = append(expected, undoOps(instanceName, expectedSideState, originalSideState)...)
