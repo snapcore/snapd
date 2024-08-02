@@ -247,7 +247,45 @@ func findDesktopFiles(rootDir string) ([]string, error) {
 	return desktopFiles, nil
 }
 
-func deriveDesktopFilesContent(s *snap.Info) (map[string]osutil.FileState, error) {
+func findSnapDesktopFileIDs(s *snap.Info) (map[string]bool, error) {
+	var desktopPlug *snap.PlugInfo
+	for _, plug := range s.Plugs {
+		if plug.Interface == "desktop" {
+			desktopPlug = plug
+			break
+		}
+	}
+	if desktopPlug == nil {
+		return nil, nil
+	}
+
+	attrVal, exists := desktopPlug.Lookup("desktop-file-ids")
+	if !exists {
+		// desktop-file-ids attribute is optional
+		return nil, nil
+	}
+
+	// desktop-file-ids must be a list of strings
+	desktopFileIDs, ok := attrVal.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf(`internal error: "desktop-file-ids" must be a list of strings`)
+	}
+	if len(desktopFileIDs) == 0 {
+		return nil, nil
+	}
+
+	desktopFileIDsMap := make(map[string]bool, len(desktopFileIDs))
+	for _, val := range desktopFileIDs {
+		desktopFileID, ok := val.(string)
+		if !ok {
+			return nil, fmt.Errorf(`internal error: "desktop-file-ids" must be a list of strings`)
+		}
+		desktopFileIDsMap[desktopFileID] = true
+	}
+	return desktopFileIDsMap, nil
+}
+
+func deriveDesktopFilesContent(s *snap.Info, desktopFileIDs map[string]bool) (map[string]osutil.FileState, error) {
 	rootDir := filepath.Join(s.MountDir(), "meta", "gui")
 	desktopFiles, err := findDesktopFiles(rootDir)
 	if err != nil {
@@ -261,11 +299,16 @@ func deriveDesktopFilesContent(s *snap.Info) (map[string]osutil.FileState, error
 		if err != nil {
 			return nil, err
 		}
-		// FIXME: don't blindly use the snap desktop filename, mangle it
-		// but we can't just use the app name because a desktop file
-		// may call the same app with multiple parameters, e.g.
-		// --create-new, --open-existing etc
-		base = fmt.Sprintf("%s_%s", s.DesktopPrefix(), base)
+		// Don't mangle desktop files if listed under desktop-file-ids attribute
+		// XXX: Do we want to fail if a desktop-file-ids entry doesn't
+		// have a corresponding file?
+		if _, ok := desktopFileIDs[strings.TrimSuffix(base, ".desktop")]; !ok {
+			// FIXME: don't blindly use the snap desktop filename, mangle it
+			// but we can't just use the app name because a desktop file
+			// may call the same app with multiple parameters, e.g.
+			// --create-new, --open-existing etc
+			base = fmt.Sprintf("%s_%s", s.DesktopPrefix(), base)
+		}
 		installedDesktopFileName := filepath.Join(dirs.SnapDesktopFilesDir, base)
 		fileContent = sanitizeDesktopFile(s, installedDesktopFileName, fileContent)
 		content[base] = &osutil.MemoryFileState{
@@ -274,6 +317,28 @@ func deriveDesktopFilesContent(s *snap.Info) (map[string]osutil.FileState, error
 		}
 	}
 	return content, nil
+}
+
+// TODO: Merge desktop file helpers into desktop/desktopentry package
+func readSnapInstanceName(desktopFile string) (string, error) {
+	file, err := os.Open(desktopFile)
+	if err != nil {
+		return "", err
+	}
+	scanner := bufio.NewScanner(file)
+	for i := 0; scanner.Scan(); i++ {
+		bline := scanner.Bytes()
+		if !bytes.HasPrefix(bline, []byte("X-SnapInstanceName=")) {
+			continue
+		}
+		tokens := strings.SplitN(string(bline), "=", 2)
+		if len(tokens) != 2 {
+			return "", fmt.Errorf("internal error: invalid X-SnapInstanceName entry in %q", desktopFile)
+		}
+		return tokens[1], nil
+	}
+
+	return "", fmt.Errorf("cannot find X-SnapInstanceName entry in %q", desktopFile)
 }
 
 // EnsureSnapDesktopFiles puts in place the desktop files for the applications from the snap.
@@ -290,13 +355,50 @@ func EnsureSnapDesktopFiles(snaps []*snap.Info) error {
 		if s == nil {
 			return fmt.Errorf("internal error: snap info cannot be nil")
 		}
-		content, err := deriveDesktopFilesContent(s)
+
+		desktopFileIDs, err := findSnapDesktopFileIDs(s)
+		if err != nil {
+			return err
+		}
+		desktopFilesGlobs := []string{fmt.Sprintf("%s_*.desktop", s.DesktopPrefix())}
+		for desktopFileID := range desktopFileIDs {
+			desktopFilesGlobs = append(desktopFilesGlobs, desktopFileID+".desktop")
+		}
+		content, err := deriveDesktopFilesContent(s, desktopFileIDs)
 		if err != nil {
 			return err
 		}
 
-		desktopFilesGlob := fmt.Sprintf("%s_*.desktop", s.DesktopPrefix())
-		changed, removed, err := osutil.EnsureDirState(dirs.SnapDesktopFilesDir, desktopFilesGlob, content)
+		installedDesktopFiles, err := findDesktopFiles(dirs.SnapDesktopFilesDir)
+		if err != nil {
+			return err
+		}
+		for _, desktopFile := range installedDesktopFiles {
+			instanceName, err := readSnapInstanceName(desktopFile)
+			if err != nil {
+				// cannot read instance name from desktop file, ignore
+				logger.Noticef("cannot read instance name: %s", err)
+				continue
+			}
+
+			base := filepath.Base(desktopFile)
+			_, hasTarget := content[base]
+			if hasTarget && instanceName != s.InstanceName() {
+				// Check if a target desktop file belongs to another snap
+				return fmt.Errorf("cannot install %q: %q already exists for another snap", base, desktopFile)
+			}
+			hasDesktopPrefix, err := filepath.Match(fmt.Sprintf("%s_*.desktop", s.DesktopPrefix()), base)
+			if err != nil {
+				return err
+			}
+			if instanceName == s.InstanceName() && !hasTarget && !hasDesktopPrefix {
+				// An unmangled desktop file existed and is no longer used by the snap
+				// Let's include it in glob patterns space to ensure it is removed
+				desktopFilesGlobs = append(desktopFilesGlobs, base)
+			}
+		}
+
+		changed, removed, err := osutil.EnsureDirStateGlobs(dirs.SnapDesktopFilesDir, desktopFilesGlobs, content)
 		if err != nil {
 			return err
 		}
@@ -318,8 +420,31 @@ func RemoveSnapDesktopFiles(s *snap.Info) error {
 		return nil
 	}
 
-	desktopFilesGlob := fmt.Sprintf("%s_*.desktop", s.DesktopPrefix())
-	_, removed, err := osutil.EnsureDirState(dirs.SnapDesktopFilesDir, desktopFilesGlob, nil)
+	installedDesktopFiles, err := findDesktopFiles(dirs.SnapDesktopFilesDir)
+	if err != nil {
+		return err
+	}
+
+	desktopFilesGlobs := []string{fmt.Sprintf("%s_*.desktop", s.DesktopPrefix())}
+	for _, desktopFile := range installedDesktopFiles {
+		instanceName, err := readSnapInstanceName(desktopFile)
+		if err != nil {
+			// cannot read instance name from desktop file, ignore
+			logger.Noticef("cannot read instance name: %s", err)
+			continue
+		}
+		base := filepath.Base(desktopFile)
+		hasDesktopPrefix, err := filepath.Match(fmt.Sprintf("%s_*.desktop", s.DesktopPrefix()), base)
+		if err != nil {
+			return err
+		}
+		if instanceName == s.InstanceName() && !hasDesktopPrefix {
+			// An unmangled desktop file exists for the snap, add to glob
+			// patterns for removal
+			desktopFilesGlobs = append(desktopFilesGlobs, base)
+		}
+	}
+	_, removed, err := osutil.EnsureDirStateGlobs(dirs.SnapDesktopFilesDir, desktopFilesGlobs, nil)
 	if err != nil {
 		return err
 	}
