@@ -167,9 +167,6 @@ func (o *TrustedAssetsUpdateObserver) InjectChangedAsset(blName, assetName, hash
 	}
 }
 
-type BootAsset = bootAsset
-type BootChain = bootChain
-
 const (
 	BootChainEquivalent   = bootChainEquivalent
 	BootChainDifferent    = bootChainDifferent
@@ -181,7 +178,6 @@ var (
 	PredictableBootChainsEqualForReseal = predictableBootChainsEqualForReseal
 	BootAssetsToLoadChains              = bootAssetsToLoadChains
 	BootAssetLess                       = bootAssetLess
-	ReadBootChains                      = readBootChains
 
 	SetImageBootFlags = setImageBootFlags
 	NextBootFlags     = nextBootFlags
@@ -210,16 +206,12 @@ func SetBootFlagsInBootloader(flags []string, rootDir string) error {
 	return bl.SetBootVars(blVars)
 }
 
-func (b *bootChain) SecbootModelForSealing() secboot.ModelForSealing {
+func (b *BootChain) SecbootModelForSealing() secboot.ModelForSealing {
 	return b.modelForSealing()
 }
 
-func (b *bootChain) SetKernelBootFile(kbf bootloader.BootFile) {
-	b.kernelBootFile = kbf
-}
-
-func (b *bootChain) KernelBootFile() bootloader.BootFile {
-	return b.kernelBootFile
+func (b *BootChain) SetKernelBootFile(kbf bootloader.BootFile) {
+	b.KernelBootFile = kbf
 }
 
 func MockRebootArgsPath(argsPath string) (restore func()) {
