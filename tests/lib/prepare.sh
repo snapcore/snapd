@@ -412,6 +412,29 @@ prepare_classic() {
             cache_snaps core20
         fi
 
+        # Install snapd either build by CI or by snapcraft depending on
+        # TESTS_USE_PREBUILT_SNAPD_SNAP. This makes the default behaviour
+        # to re-exec to snapd snap instead of snapd in core. Furthermore,
+        # it prevents snapd from automatically installing snapd snap as
+        # prerequisite for installing any non-base snap
+        if snap list snapd ; then
+	    snap snap info snapd
+	    echo "Error: not expecting snapd be be installed"
+	    exit 1
+	else
+	    echo ">>>>>> Snapd is not installed"
+	    echo ">>>>>> Building snapd"
+            build_dir="$WORK_DIR/snapd_snap_for_classic"
+	    rm -rf "$build_dir"
+	    mkdir -p "$build_dir"
+            build_snapd_snap "$build_dir"
+	    echo ">>>>>> Installing snapd"
+            snap install --dangerous "$build_dir/"snapd_*.snap
+        fi
+        snap list | grep snapd
+
+	#exit 1
+
         # now use parameterized core channel (defaults to edge) instead
         # of a fixed one and close to stable in order to detect defects
         # earlier

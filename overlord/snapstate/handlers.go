@@ -383,11 +383,19 @@ func (m *SnapManager) installOneBaseOrRequired(t *state.Task, snapName string, c
 	// retrying the operation.
 	var conflErr *ChangeConflictError
 	if errors.As(err, &conflErr) {
+		// TODO: Fix unit test to enable this
+		// if we are not seeded it is too early to do installs
+		/*if conflErr.ChangeKind == "seed" {
+			t.Logf("cannot install %q before seeding: %s", snapName, conflErr)
+			return nil, nil
+		}*/
+
 		// conflicted with an install in the same change, just skip
 		if conflErr.ChangeID == t.Change().ID() {
 			return nil, nil
 		}
 
+		// TODO: Track retries and warn/terminate on threshold
 		return nil, &state.Retry{After: prerequisitesRetryTimeout}
 	}
 	return ts, err
@@ -561,18 +569,27 @@ func (m *SnapManager) installPrereqs(t *state.Task, base string, prereq map[stri
 		}
 	}
 
-	// on systems without core or snapd need to install snapd to
-	// make interfaces work - LP: 1819318
+	// On systems without core or snapd need to install snapd to make
+	// interfaces work - LP: 1819318. Ubuntu Core systems must always
+	// have either core or snapd. On classic systems, to ensure
+	// consistent behaviour with all bases, we always install snapd.
 	var tsSnapd *state.TaskSet
 	snapdSnapInstalled, err := isInstalled(st, "snapd")
 	if err != nil {
 		return err
 	}
-	coreSnapInstalled, err := isInstalled(st, "core")
-	if err != nil {
-		return err
-	}
-	if base != "core" && !snapdSnapInstalled && !coreSnapInstalled {
+
+	// Required for unit test TestPreseedOnClassicHappy which runs
+	// as classic system that is not yet seeded. Attempting snapd
+	// installation in non seeded system result in conflict error
+	// without change ID (even though it is for the same change)
+	// forever retries due to InstallWithDeviceContext conflict
+	// error handling of installOneBaseOrRequired. Alternatively
+	// we can skip install on seed conflict error.
+	deviceCtx, err := DevicePastSeeding(st, nil)
+	seeded := err == nil && deviceCtx != nil
+
+	if release.OnClassic && seeded && !snapdSnapInstalled {
 		timings.Run(tm, "install-prereq", "install snapd", func(timings.Measurer) {
 			noTypeBaseCheck := false
 			tsSnapd, err = m.installOneBaseOrRequired(t, "snapd", nil, noTypeBaseCheck, defaultSnapdSnapsChannel(), onInFlightErr, userID, Flags{

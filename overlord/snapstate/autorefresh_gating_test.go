@@ -1960,6 +1960,14 @@ func (s *snapmgrTestSuite) testAutoRefreshPhase2(c *C, beforePhase1 func(), gate
 	st.Lock()
 	defer st.Unlock()
 
+	// prevent automatic installation of snapd
+	/*snapstate.Set(s.state, "snapd", &snapstate.SnapState{
+		Sequence: snapstatetest.NewSequenceFromSnapSideInfos([]*snap.SideInfo{
+			{RealName: "snapd", Revision: snap.R(1)},
+		}),
+		Current: snap.R(1),
+	})*/
+
 	// enable gate-auto-refresh-hook feature
 	tr := config.NewTransaction(s.state)
 	tr.Set("core", "experimental.gate-auto-refresh-hook", true)
@@ -2254,6 +2262,14 @@ func (s *snapmgrTestSuite) testAutoRefreshPhase2DiskSpaceCheck(c *C, fail bool) 
 	st := s.state
 	st.Lock()
 	defer st.Unlock()
+
+	// prevent automatic installation of snapd
+	/*snapstate.Set(s.state, "snapd", &snapstate.SnapState{
+		Sequence: snapstatetest.NewSequenceFromSnapSideInfos([]*snap.SideInfo{
+			{RealName: "snapd", Revision: snap.R(1)},
+		}),
+		Current: snap.R(1),
+	})*/
 
 	restore := snapstate.MockOsutilCheckFreeSpace(func(path string, sz uint64) error {
 		c.Check(sz, Equals, snapstate.SafetyMarginDiskSpace(123))
