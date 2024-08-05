@@ -1,8 +1,8 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
-//go:build !nosecboot
+//go:build nosecboot
 
 /*
- * Copyright (C) 2019-2020 Canonical Ltd
+ * Copyright (C) 2024 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -18,17 +18,22 @@
  *
  */
 
-package main
+package devicestate
 
 import (
+	"fmt"
+
 	"github.com/snapcore/snapd/secboot"
 )
 
-func init() {
-	secbootProvisionForCVM = secboot.ProvisionForCVM
-	secbootMeasureSnapSystemEpochWhenPossible = secboot.MeasureSnapSystemEpochWhenPossible
-	secbootMeasureSnapModelWhenPossible = secboot.MeasureSnapModelWhenPossible
-	secbootUnlockVolumeUsingSealedKeyIfEncrypted = secboot.UnlockVolumeUsingSealedKeyIfEncrypted
-	secbootUnlockEncryptedVolumeUsingPlatformKey = secboot.UnlockEncryptedVolumeUsingPlatformKey
-	secbootLockSealedKeys = secboot.LockSealedKeys
+func createSaveBootstrappedContainerImpl(saveNode string) (secboot.BootstrappedContainer, error) {
+	return nil, fmt.Errorf("not implemented")
 }
+
+var createSaveBootstrappedContainer = createSaveBootstrappedContainerImpl
+
+func deleteOldSaveKeyImpl(saveMntPt string) error {
+	return fmt.Errorf("not implemented")
+}
+
+var deleteOldSaveKey = deleteOldSaveKeyImpl

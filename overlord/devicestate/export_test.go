@@ -594,3 +594,19 @@ func CleanUpEncryptionSetupDataInCache(st *state.State, label string) {
 }
 
 type UniqueSnapsInRecoverySystem = uniqueSnapsInRecoverySystem
+
+func MockCreateSaveBootstrappedContainer(f func(saveNode string) (secboot.BootstrappedContainer, error)) func() {
+	old := createSaveBootstrappedContainer
+	createSaveBootstrappedContainer = f
+	return func() {
+		createSaveBootstrappedContainer = old
+	}
+}
+
+func MockDeleteOldSaveKey(f func(saveMntPnt string) error) func() {
+	old := deleteOldSaveKey
+	deleteOldSaveKey = f
+	return func() {
+		deleteOldSaveKey = old
+	}
+}

@@ -117,7 +117,7 @@ func MockSecbootProvisionTPM(f func(mode secboot.TPMProvisionMode, lockoutAuthFi
 	return restore
 }
 
-func MockSecbootSealKeys(f func(keys []secboot.SealKeyRequest, params *secboot.SealKeysParams) error) (restore func()) {
+func MockSecbootSealKeys(f func(keys []secboot.SealKeyRequest, params *secboot.SealKeysParams) ([]byte, error)) (restore func()) {
 	old := secbootSealKeys
 	secbootSealKeys = f
 	return func() {
@@ -206,7 +206,7 @@ func SetBootFlagsInBootloader(flags []string, rootDir string) error {
 }
 
 func (b *BootChain) SecbootModelForSealing() secboot.ModelForSealing {
-	return b.modelForSealing()
+	return b.ModelForSealing()
 }
 
 func (b *BootChain) SetKernelBootFile(kbf bootloader.BootFile) {

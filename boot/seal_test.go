@@ -271,7 +271,7 @@ func (s *sealSuite) TestSealKeyToModeenv(c *C) {
 
 		// set mock key sealing
 		sealKeysCalls := 0
-		restore = boot.MockSecbootSealKeys(func(keys []secboot.SealKeyRequest, params *secboot.SealKeysParams) error {
+		restore = boot.MockSecbootSealKeys(func(keys []secboot.SealKeyRequest, params *secboot.SealKeysParams) ([]byte, error) {
 			c.Assert(provisionCalls, Equals, 1, Commentf("TPM must have been provisioned before"))
 			sealKeysCalls++
 			switch sealKeysCalls {
@@ -280,7 +280,7 @@ func (s *sealSuite) TestSealKeyToModeenv(c *C) {
 				c.Check(params.TPMPolicyAuthKeyFile, Equals, filepath.Join(boot.InstallHostFDESaveDir, "tpm-policy-auth-key"))
 
 				dataKeyFile := filepath.Join(rootdir, "/run/mnt/ubuntu-boot/device/fde/ubuntu-data.sealed-key")
-				c.Check(keys, DeepEquals, []secboot.SealKeyRequest{{BootstrappedContainer: myKey, KeyName: "ubuntu-data", KeyFile: dataKeyFile}})
+				c.Check(keys, DeepEquals, []secboot.SealKeyRequest{{BootstrappedContainer: myKey, KeyName: "ubuntu-data", SlotName: "default", KeyFile: dataKeyFile}})
 				if tc.pcrHandleOfKey == secboot.FallbackObjectPCRPolicyCounterHandle {
 					c.Check(params.PCRPolicyCounterHandle, Equals, secboot.AltRunObjectPCRPolicyCounterHandle)
 				} else {
@@ -296,7 +296,7 @@ func (s *sealSuite) TestSealKeyToModeenv(c *C) {
 					// during factory reset we use a different key location
 					saveKeyFile = filepath.Join(rootdir, "/run/mnt/ubuntu-seed/device/fde/ubuntu-save.recovery.sealed-key.factory-reset")
 				}
-				c.Check(keys, DeepEquals, []secboot.SealKeyRequest{{BootstrappedContainer: myKey, KeyName: "ubuntu-data", KeyFile: dataKeyFile}, {BootstrappedContainer: myKey2, KeyName: "ubuntu-save", KeyFile: saveKeyFile}})
+				c.Check(keys, DeepEquals, []secboot.SealKeyRequest{{BootstrappedContainer: myKey, KeyName: "ubuntu-data", SlotName: "default-fallback", KeyFile: dataKeyFile}, {BootstrappedContainer: myKey2, KeyName: "ubuntu-save", SlotName: "default-fallback", KeyFile: saveKeyFile}})
 				if tc.pcrHandleOfKey == secboot.FallbackObjectPCRPolicyCounterHandle {
 					c.Check(params.PCRPolicyCounterHandle, Equals, secboot.AltFallbackObjectPCRPolicyCounterHandle)
 				} else {
@@ -348,7 +348,7 @@ func (s *sealSuite) TestSealKeyToModeenv(c *C) {
 			}
 			c.Assert(params.ModelParams[0].Model.Model(), Equals, "my-model-uc20")
 
-			return tc.sealErr
+			return nil, tc.sealErr
 		})
 		defer restore()
 
@@ -1847,16 +1847,6 @@ func (s *sealSuite) TestSealToModeenvWithFdeHookHappy(c *C) {
 		{Key: []byte{1, 2, 3, 4}, KeyName: "ubuntu-data"},
 		{Key: []byte{1, 2, 3, 4}, KeyName: "ubuntu-save"},
 	})
-	// check that the sealed keys got written to the expected places
-	for i, p := range []string{
-		filepath.Join(boot.InitramfsBootEncryptionKeyDir, "ubuntu-data.sealed-key"),
-		filepath.Join(boot.InitramfsSeedEncryptionKeyDir, "ubuntu-data.recovery.sealed-key"),
-		filepath.Join(boot.InitramfsSeedEncryptionKeyDir, "ubuntu-save.recovery.sealed-key"),
-	} {
-		// Check for a valid platform handle, encrypted payload (base64)
-		mockedSealedKey := []byte(fmt.Sprintf("key-%v", strconv.Itoa(i+1)))
-		c.Check(keyToSave[p], DeepEquals, mockedSealedKey)
-	}
 
 	marker := filepath.Join(dirs.SnapFDEDirUnder(filepath.Join(dirs.GlobalRootDir, "/run/mnt/ubuntu-data/system-data")), "sealed-keys")
 	c.Check(marker, testutil.FileEquals, "fde-setup-hook")
