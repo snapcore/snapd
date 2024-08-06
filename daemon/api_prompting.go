@@ -26,11 +26,11 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/snapcore/snapd/interfaces/prompting"
+	"github.com/snapcore/snapd/interfaces/prompting/requestprompts"
+	"github.com/snapcore/snapd/interfaces/prompting/requestrules"
 	"github.com/snapcore/snapd/overlord/auth"
 	"github.com/snapcore/snapd/overlord/ifacestate/apparmorprompting"
-	"github.com/snapcore/snapd/overlord/ifacestate/apparmorprompting/common"
-	"github.com/snapcore/snapd/overlord/ifacestate/apparmorprompting/requestprompts"
-	"github.com/snapcore/snapd/overlord/ifacestate/apparmorprompting/requestrules"
 	"github.com/snapcore/snapd/strutil"
 )
 
@@ -113,19 +113,19 @@ func getUserID(r *http.Request) (uint32, Response) {
 }
 
 type postPromptBody struct {
-	Outcome     common.OutcomeType  `json:"action"`
-	Lifespan    common.LifespanType `json:"lifespan"`
-	Duration    string              `json:"duration,omitempty"`
-	Constraints *common.Constraints `json:"constraints"`
+	Outcome     prompting.OutcomeType  `json:"action"`
+	Lifespan    prompting.LifespanType `json:"lifespan"`
+	Duration    string                 `json:"duration,omitempty"`
+	Constraints *prompting.Constraints `json:"constraints"`
 }
 
 type addRuleContents struct {
-	Snap        string              `json:"snap"`
-	Interface   string              `json:"interface"`
-	Constraints *common.Constraints `json:"constraints"`
-	Outcome     common.OutcomeType  `json:"outcome"`
-	Lifespan    common.LifespanType `json:"lifespan"`
-	Duration    string              `json:"duration,omitempty"`
+	Snap        string                 `json:"snap"`
+	Interface   string                 `json:"interface"`
+	Constraints *prompting.Constraints `json:"constraints"`
+	Outcome     prompting.OutcomeType  `json:"outcome"`
+	Lifespan    prompting.LifespanType `json:"lifespan"`
+	Duration    string                 `json:"duration,omitempty"`
 }
 
 type removeRulesSelector struct {
@@ -134,10 +134,10 @@ type removeRulesSelector struct {
 }
 
 type patchRuleContents struct {
-	Constraints *common.Constraints `json:"constraints,omitempty"`
-	Outcome     common.OutcomeType  `json:"outcome,omitempty"`
-	Lifespan    common.LifespanType `json:"lifespan,omitempty"`
-	Duration    string              `json:"duration,omitempty"`
+	Constraints *prompting.Constraints `json:"constraints,omitempty"`
+	Outcome     prompting.OutcomeType  `json:"outcome,omitempty"`
+	Lifespan    prompting.LifespanType `json:"lifespan,omitempty"`
+	Duration    string                 `json:"duration,omitempty"`
 }
 
 type postRulesRequestBody struct {
@@ -161,8 +161,8 @@ func getPrompts(c *Command, r *http.Request, user *auth.UserState) Response {
 		return errorResp
 	}
 
-	if !apparmorprompting.PromptingEnabled() {
-		return InternalError("Apparmor Prompting is not enabled")
+	if !c.d.overlord.InterfaceManager().AppArmorPromptingRunning() {
+		return InternalError("Apparmor Prompting is not running")
 	}
 
 	prompts, err := c.d.overlord.InterfaceManager().Prompting().GetPrompts(userID)
@@ -189,11 +189,16 @@ func getPrompt(c *Command, r *http.Request, user *auth.UserState) Response {
 		return errorResp
 	}
 
-	if !apparmorprompting.PromptingEnabled() {
-		return InternalError("Apparmor Prompting is not enabled")
+	promptID, err := prompting.IDFromString(id)
+	if err != nil {
+		return BadRequest("%v", err)
 	}
 
-	prompt, err := c.d.overlord.InterfaceManager().Prompting().GetPromptWithID(userID, id)
+	if !c.d.overlord.InterfaceManager().AppArmorPromptingRunning() {
+		return InternalError("Apparmor Prompting is not running")
+	}
+
+	prompt, err := c.d.overlord.InterfaceManager().Prompting().GetPromptWithID(userID, promptID)
 	if errors.Is(err, apparmorprompting.ErrPromptingNotEnabled) {
 		return InternalError("%v", err)
 	} else if err != nil {
@@ -216,8 +221,13 @@ func postPrompt(c *Command, r *http.Request, user *auth.UserState) Response {
 		return errorResp
 	}
 
-	if !apparmorprompting.PromptingEnabled() {
-		return InternalError("Apparmor Prompting is not enabled")
+	promptID, err := prompting.IDFromString(id)
+	if err != nil {
+		return BadRequest("%v", err)
+	}
+
+	if !c.d.overlord.InterfaceManager().AppArmorPromptingRunning() {
+		return InternalError("Apparmor Prompting is not running")
 	}
 
 	var reply postPromptBody
@@ -226,12 +236,10 @@ func postPrompt(c *Command, r *http.Request, user *auth.UserState) Response {
 		return BadRequest("cannot decode request body into prompt reply: %v", err)
 	}
 
-	satisfiedPromptIDs, err := c.d.overlord.InterfaceManager().Prompting().HandleReply(userID, id, reply.Constraints, reply.Outcome, reply.Lifespan, reply.Duration)
-	// TODO: once rebased on master, add to the following:
-	//if errors.Is(err, requestprompts.ErrClosed) {
-	//	return InternalError("%v", err)
-	//}
-	if errors.Is(err, requestprompts.ErrUserNotFound) || errors.Is(err, requestprompts.ErrPromptIDNotFound) {
+	satisfiedPromptIDs, err := c.d.overlord.InterfaceManager().Prompting().HandleReply(userID, promptID, reply.Constraints, reply.Outcome, reply.Lifespan, reply.Duration)
+	if errors.Is(err, requestprompts.ErrClosed) {
+		return InternalError("%v", err)
+	} else if errors.Is(err, requestprompts.ErrNotFound) {
 		return NotFound("%v", err)
 	} else if errors.Is(err, requestrules.ErrPathPatternConflict) {
 		return Conflict("%v", err)
@@ -252,8 +260,8 @@ func getRules(c *Command, r *http.Request, user *auth.UserState) Response {
 		return errorResp
 	}
 
-	if !apparmorprompting.PromptingEnabled() {
-		return InternalError("Apparmor Prompting is not enabled")
+	if !c.d.overlord.InterfaceManager().AppArmorPromptingRunning() {
+		return InternalError("Apparmor Prompting is not running")
 	}
 
 	query := r.URL.Query()
@@ -278,8 +286,8 @@ func postRules(c *Command, r *http.Request, user *auth.UserState) Response {
 		return errorResp
 	}
 
-	if !apparmorprompting.PromptingEnabled() {
-		return InternalError("Apparmor Prompting is not enabled")
+	if !c.d.overlord.InterfaceManager().AppArmorPromptingRunning() {
+		return InternalError("Apparmor Prompting is not running")
 	}
 
 	var postBody postRulesRequestBody
@@ -327,11 +335,16 @@ func getRule(c *Command, r *http.Request, user *auth.UserState) Response {
 		return errorResp
 	}
 
-	if !apparmorprompting.PromptingEnabled() {
-		return InternalError("Apparmor Prompting is not enabled")
+	promptID, err := prompting.IDFromString(id)
+	if err != nil {
+		return BadRequest("%v", err)
 	}
 
-	rule, err := c.d.overlord.InterfaceManager().Prompting().GetRule(userID, id)
+	if !c.d.overlord.InterfaceManager().AppArmorPromptingRunning() {
+		return InternalError("Apparmor Prompting is not running")
+	}
+
+	rule, err := c.d.overlord.InterfaceManager().Prompting().GetRule(userID, promptID)
 	if err != nil {
 		return NotFound("%v", err)
 	}
@@ -347,8 +360,13 @@ func postRule(c *Command, r *http.Request, user *auth.UserState) Response {
 		return userNotAllowedPromptingClientResponse(user)
 	}
 
-	if !apparmorprompting.PromptingEnabled() {
-		return InternalError("Apparmor Prompting is not enabled")
+	promptID, err := prompting.IDFromString(id)
+	if err != nil {
+		return BadRequest("%v", err)
+	}
+
+	if !c.d.overlord.InterfaceManager().AppArmorPromptingRunning() {
+		return InternalError("Apparmor Prompting is not running")
 	}
 
 	var postBody postRuleRequestBody
@@ -367,7 +385,7 @@ func postRule(c *Command, r *http.Request, user *auth.UserState) Response {
 		if postBody.PatchRule == nil {
 			return BadRequest(`must include "rule" field in request body when action is "patch"`)
 		}
-		patchedRule, err := c.d.overlord.InterfaceManager().Prompting().PatchRule(userID, id, postBody.PatchRule.Constraints, postBody.PatchRule.Outcome, postBody.PatchRule.Lifespan, postBody.PatchRule.Duration)
+		patchedRule, err := c.d.overlord.InterfaceManager().Prompting().PatchRule(userID, promptID, postBody.PatchRule.Constraints, postBody.PatchRule.Outcome, postBody.PatchRule.Lifespan, postBody.PatchRule.Duration)
 		if errors.Is(err, requestrules.ErrRuleIDNotFound) || errors.Is(err, requestrules.ErrUserNotAllowed) {
 			return NotFound("%v", err)
 		} else if errors.Is(err, requestrules.ErrInternalInconsistency) {
@@ -377,7 +395,7 @@ func postRule(c *Command, r *http.Request, user *auth.UserState) Response {
 		}
 		return SyncResponse(patchedRule)
 	case "remove":
-		removedRule, err := c.d.overlord.InterfaceManager().Prompting().RemoveRule(userID, id)
+		removedRule, err := c.d.overlord.InterfaceManager().Prompting().RemoveRule(userID, promptID)
 		if errors.Is(err, requestrules.ErrRuleIDNotFound) || errors.Is(err, requestrules.ErrUserNotAllowed) {
 			return NotFound("%v", err)
 		} else if err != nil {
