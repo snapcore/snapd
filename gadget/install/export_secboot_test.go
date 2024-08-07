@@ -21,8 +21,8 @@
 package install
 
 import (
-	"github.com/snapcore/snapd/boot"
 	"github.com/snapcore/snapd/kernel/fde"
+	fdeBackend "github.com/snapcore/snapd/overlord/fdestate/backend"
 	"github.com/snapcore/snapd/secboot"
 	"github.com/snapcore/snapd/secboot/keys"
 	"github.com/snapcore/snapd/testutil"
@@ -41,7 +41,7 @@ func MockSecbootFormatEncryptedDevice(f func(key keys.EncryptionKey, encType sec
 }
 
 func MockBootRunFDESetupHook(f func(req *fde.SetupRequest) ([]byte, error)) (restore func()) {
-	r := testutil.Backup(&boot.RunFDESetupHook)
-	boot.RunFDESetupHook = f
+	r := testutil.Backup(&fdeBackend.RunFDESetupHook)
+	fdeBackend.RunFDESetupHook = f
 	return r
 }
