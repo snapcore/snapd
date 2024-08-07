@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/snapcore/snapd/i18n"
 	"github.com/snapcore/snapd/logger"
 	"github.com/snapcore/snapd/overlord/hookstate"
 	"github.com/snapcore/snapd/overlord/ifacestate/ifacerepo"
@@ -35,18 +36,26 @@ func init() {
 	}
 	hookstate.SaveRegistryHandlerGenerator = func(context *hookstate.Context) hookstate.Handler {
 		return &saveRegistryHandler{
-			MultiplexHandler: hookstate.MultiplexHandler{
-				Ctx: context,
-			},
+			ctx: context,
 		}
 	}
 	hookstate.ChangeRegistryHandlerGenerator = func(context *hookstate.Context) hookstate.Handler {
 		return &changeRegistryHandler{
-			MultiplexHandler: hookstate.MultiplexHandler{
-				Ctx: context,
-			},
+			ctx: context,
 		}
 	}
+}
+
+func setupRegistryHook(st *state.State, snapName, hookName string, ignoreError bool) *state.Task {
+	hookSup := &hookstate.HookSetup{
+		Snap:        snapName,
+		Hook:        hookName,
+		Optional:    true,
+		IgnoreError: ignoreError,
+	}
+	summary := fmt.Sprintf(i18n.G("Run hook %s of snap %q"), hookName, snapName)
+	task := hookstate.HookTask(st, summary, hookSup, nil)
+	return task
 }
 
 type viewChangedHandler struct {
@@ -77,14 +86,20 @@ func (h *viewChangedHandler) Precondition() (bool, error) {
 }
 
 type changeRegistryHandler struct {
-	hookstate.MultiplexHandler
+	ctx *hookstate.Context
+}
+
+// TODO: precondition
+func (h *changeRegistryHandler) Before() error { return nil }
+func (h *changeRegistryHandler) Error(hookErr error) (ignoreHookErr bool, err error) {
+	return false, nil
 }
 
 func (h *changeRegistryHandler) Done() error {
-	h.Ctx.Lock()
-	defer h.Ctx.Unlock()
+	h.ctx.Lock()
+	defer h.ctx.Unlock()
 
-	t, _ := h.Ctx.Task()
+	t, _ := h.ctx.Task()
 	tx, _, err := GetTransaction(t)
 	if err != nil {
 		return fmt.Errorf("cannot get transaction in change-registry handler: %v", err)
@@ -98,15 +113,20 @@ func (h *changeRegistryHandler) Done() error {
 }
 
 type saveRegistryHandler struct {
-	hookstate.MultiplexHandler
+	ctx *hookstate.Context
 }
 
-func (h *saveRegistryHandler) Error(origErr error) (ignoreErr bool, err error) {
-	h.Ctx.Lock()
-	defer h.Ctx.Unlock()
+// TODO: precondition
+func (h *saveRegistryHandler) Before() error { return nil }
 
-	t, _ := h.Ctx.Task()
-	st := h.Ctx.State()
+// TODO: all of this is now invalid since hooks are no longer multiplexed.
+// On the bright side, the new logic will be much simpler
+func (h *saveRegistryHandler) Error(origErr error) (ignoreErr bool, err error) {
+	h.ctx.Lock()
+	defer h.ctx.Unlock()
+
+	t, _ := h.ctx.Task()
+	st := h.ctx.State()
 
 	// we're not failing yet to run the rollback, so we need to manually set
 	// the waiting tasks to hold to avoid running them
@@ -155,7 +175,7 @@ func (h *saveRegistryHandler) Error(origErr error) (ignoreErr bool, err error) {
 	t.Change().Set("save-registry-error", origErr.Error())
 
 	ignoreError := true
-	rollbackTask := setupRegistryHook(st, h.Ctx.InstanceName(), "save-registry", ignoreError)
+	rollbackTask := setupRegistryHook(st, h.ctx.InstanceName(), "save-registry", ignoreError)
 	rollbackTask.WaitFor(t)
 	t.Change().AddTask(rollbackTask)
 
@@ -168,10 +188,10 @@ func (h *saveRegistryHandler) Error(origErr error) (ignoreErr bool, err error) {
 }
 
 func (h *saveRegistryHandler) Done() error {
-	h.Ctx.Lock()
-	defer h.Ctx.Unlock()
+	h.ctx.Lock()
+	defer h.ctx.Unlock()
 
-	t, _ := h.Ctx.Task()
+	t, _ := h.ctx.Task()
 	var rollbackTask string
 	err := t.Change().Get("rollback-task", &rollbackTask)
 	if err != nil && !errors.Is(err, &state.NoStateError{}) {
@@ -192,4 +212,10 @@ func (h *saveRegistryHandler) Done() error {
 	// fail with the original error
 	logger.Noticef("successfully rolled back failed save-registry")
 	return errors.New(saveRegErr)
+}
+
+func IsRegistryHook(ctx *hookstate.Context) bool {
+	return strings.HasPrefix(ctx.HookName(), "change-registry-") ||
+		strings.HasPrefix(ctx.HookName(), "save-registry-") ||
+		strings.HasSuffix(ctx.HookName(), "-view-changed")
 }

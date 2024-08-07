@@ -85,11 +85,6 @@ type Preconditioner interface {
 	Precondition() (bool, error)
 }
 
-type Multiplexer interface {
-	// returns a list of snaps that runHook should run the hook for
-	Multiplex() []string
-}
-
 // HookSetup is a reference to a hook within a specific snap.
 type HookSetup struct {
 	Snap     string        `json:"snap"`
@@ -242,14 +237,20 @@ func (m *HookManager) Context(cookieID string) (*Context, error) {
 	return context, nil
 }
 
-func hookSetup(task *state.Task, key string) (*HookSetup, error) {
+func hookSetup(task *state.Task, key string) (*HookSetup, *snapstate.SnapState, error) {
 	var hooksup HookSetup
 	err := task.Get(key, &hooksup)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return &hooksup, nil
+	var snapst snapstate.SnapState
+	err = snapstate.Get(task.State(), hooksup.Snap, &snapst)
+	if err != nil && !errors.Is(err, state.ErrNoState) {
+		return nil, nil, fmt.Errorf("cannot handle %q snap: %v", hooksup.Snap, err)
+	}
+
+	return &hooksup, &snapst, nil
 }
 
 // NumRunningHooks returns the number of hooks running at the moment.
@@ -277,13 +278,13 @@ func (m *HookManager) GracefullyWaitRunningHooks() bool {
 // goroutine.
 func (m *HookManager) doRunHook(task *state.Task, tomb *tomb.Tomb) error {
 	task.State().Lock()
-	hooksup, err := hookSetup(task, "hook-setup")
+	hooksup, snapst, err := hookSetup(task, "hook-setup")
 	task.State().Unlock()
 	if err != nil {
 		return fmt.Errorf("cannot extract hook setup from task: %s", err)
 	}
 
-	return m.runHookForTask(task, tomb, hooksup)
+	return m.runHookForTask(task, tomb, snapst, hooksup)
 }
 
 // undoRunHook runs the undo-hook that was requested.
@@ -292,7 +293,7 @@ func (m *HookManager) doRunHook(task *state.Task, tomb *tomb.Tomb) error {
 // goroutine.
 func (m *HookManager) undoRunHook(task *state.Task, tomb *tomb.Tomb) error {
 	task.State().Lock()
-	hooksup, err := hookSetup(task, "undo-hook-setup")
+	hooksup, snapst, err := hookSetup(task, "undo-hook-setup")
 	task.State().Unlock()
 	if err != nil {
 		if errors.Is(err, state.ErrNoState) {
@@ -302,28 +303,36 @@ func (m *HookManager) undoRunHook(task *state.Task, tomb *tomb.Tomb) error {
 		return fmt.Errorf("cannot extract undo hook setup from task: %s", err)
 	}
 
-	return m.runHookForTask(task, tomb, hooksup)
+	return m.runHookForTask(task, tomb, snapst, hooksup)
 }
 
 func (m *HookManager) EphemeralRunHook(ctx context.Context, hooksup *HookSetup, contextData map[string]interface{}) (*Context, error) {
+	var snapst snapstate.SnapState
+	m.state.Lock()
+	err := snapstate.Get(m.state, hooksup.Snap, &snapst)
+	m.state.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("cannot run ephemeral hook %q for snap %q: %v", hooksup.Hook, hooksup.Snap, err)
+	}
+
 	context, err := newEphemeralHookContextWithData(m.state, hooksup, contextData)
 	if err != nil {
 		return nil, err
 	}
 
 	tomb, _ := tomb.WithContext(ctx)
-	if err := m.runHook(context, hooksup, tomb); err != nil {
+	if err := m.runHook(context, &snapst, hooksup, tomb); err != nil {
 		return nil, err
 	}
 	return context, nil
 }
 
-func (m *HookManager) runHookForTask(task *state.Task, tomb *tomb.Tomb, hooksup *HookSetup) error {
+func (m *HookManager) runHookForTask(task *state.Task, tomb *tomb.Tomb, snapst *snapstate.SnapState, hooksup *HookSetup) error {
 	context, err := NewContext(task, m.state, hooksup, nil, "")
 	if err != nil {
 		return err
 	}
-	return m.runHook(context, hooksup, tomb)
+	return m.runHook(context, snapst, hooksup, tomb)
 }
 
 // runHookGuardForRestarting helps avoiding running a hook if we are
@@ -340,34 +349,56 @@ func (m *HookManager) runHookGuardForRestarting(context *Context) error {
 	return nil
 }
 
-// TODO: docs
-func maybeMultiplexHook(context *Context) ([]string, []*snapstate.SnapState, error) {
-	context.Lock()
-	defer context.Unlock()
+func (m *HookManager) runHook(context *Context, snapst *snapstate.SnapState, hooksup *HookSetup, tomb *tomb.Tomb) error {
+	// for now, we will only support hijacking snap hooks, not component hooks.
+	// if we ever add components to the snapd snap, we might need to handle
+	// hijacking component hooks as well.
+	mustHijack := context.IsSnapHook() && m.hijacked(hooksup.Hook, hooksup.Snap) != nil
+	hookExists := false
 
-	var snaps []string
-	if multiplexer, ok := context.Handler().(Multiplexer); ok {
-		snaps = multiplexer.Multiplex()
-	} else {
-		snaps = []string{context.setup.Snap}
-	}
-
-	var states []*snapstate.SnapState
-	for _, snap := range snaps {
-		var snapst snapstate.SnapState
-		err := snapstate.Get(context.state, snap, &snapst)
-		if err != nil && !errors.Is(err, state.ErrNoState) {
-			return nil, nil, fmt.Errorf("cannot handle %q snap: %v", snap, err)
+	if !mustHijack {
+		// not hijacked, snap must be installed
+		if !snapst.IsInstalled() {
+			return fmt.Errorf("cannot find %q snap", hooksup.Snap)
 		}
 
-		states = append(states, &snapst)
+		info, err := snapst.CurrentInfo()
+		if err != nil {
+			return fmt.Errorf("cannot read %q snap details: %v", hooksup.Snap, err)
+		}
+
+		if context.IsSnapHook() {
+			hookExists = info.Hooks[hooksup.Hook] != nil
+			if !hookExists && !hooksup.Optional {
+				return fmt.Errorf("snap %q has no %q hook", hooksup.Snap, hooksup.Hook)
+			}
+		} else {
+			comp, err := snapst.CurrentComponentInfo(naming.ComponentRef{
+				SnapName:      info.SnapName(),
+				ComponentName: hooksup.Component,
+			})
+			if err != nil {
+				return fmt.Errorf(`cannot read "%s+%s" component details: %v`, info.SnapName(), hooksup.Component, err)
+			}
+
+			hookExists = comp.Hooks[hooksup.Hook] != nil
+			if !hookExists && !hooksup.Optional {
+				return fmt.Errorf(`component "%s+%s" has no %q hook`, info.SnapName(), hooksup.Component, hooksup.Hook)
+			}
+		}
 	}
 
-	return snaps, states, nil
-}
+	if hookExists || mustHijack {
+		// we will run something, not a noop
+		if err := m.runHookGuardForRestarting(context); err != nil {
+			return err
+		}
+		defer atomic.AddInt32(&m.runningHooks, -1)
+	} else if !hooksup.Always {
+		// a noop with no 'always' flag: bail
+		return nil
+	}
 
-// TODO: rm snapstate
-func (m *HookManager) runHook(context *Context, hooksup *HookSetup, tomb *tomb.Tomb) error {
 	// Obtain a handler for this hook. The repository returns a list since it's
 	// possible for regular expressions to overlap, but multiple handlers is an
 	// error (as is no handler).
@@ -386,69 +417,6 @@ func (m *HookManager) runHook(context *Context, hooksup *HookSetup, tomb *tomb.T
 		return fmt.Errorf("internal error: %d handlers registered for hook %q, expected 1", handlersCount, hooksup.Hook)
 	}
 	context.handler = handlers[0]
-
-	snaps, snapstates, err := maybeMultiplexHook(context)
-	if err != nil {
-		return err
-	}
-
-	var hookOrHijackExists bool
-	hooksExist := make([]bool, len(snaps))
-	for i, snapst := range snapstates {
-		// for now, we will only support hijacking snap hooks, not component hooks.
-		// if we ever add components to the snapd snap, we might need to handle
-		// hijacking component hooks as well.
-		mustHijack := context.IsSnapHook() && m.hijacked(hooksup.Hook, snaps[i]) != nil
-
-		if !mustHijack {
-			// not hijacked, snap must be installed
-			if !snapst.IsInstalled() {
-				return fmt.Errorf("cannot find %q snap", snaps[i])
-			}
-
-			info, err := snapst.CurrentInfo()
-			if err != nil {
-				return fmt.Errorf("cannot read %q snap details: %v", snaps[i], err)
-			}
-
-			if context.IsSnapHook() {
-				hooksExist[i] = info.Hooks[hooksup.Hook] != nil
-				if !hooksExist[i] && !hooksup.Optional {
-					return fmt.Errorf("snap %q has no %q hook", snaps[i], hooksup.Hook)
-				}
-			} else {
-				comp, err := snapst.CurrentComponentInfo(naming.ComponentRef{
-					SnapName:      info.SnapName(),
-					ComponentName: hooksup.Component,
-				})
-				if err != nil {
-					return fmt.Errorf(`cannot read "%s+%s" component details: %v`, info.SnapName(), hooksup.Component, err)
-				}
-
-				hooksExist[i] = comp.Hooks[hooksup.Hook] != nil
-				if !hooksExist[i] && !hooksup.Optional {
-					return fmt.Errorf(`component "%s+%s" has no %q hook`, info.SnapName(), hooksup.Component, hooksup.Hook)
-				}
-			}
-		}
-
-		// keep track of whether we'll run or hijack at least one hook, so we can
-		// count running hooks or bail early if possible
-		if mustHijack || hooksExist[i] {
-			hookOrHijackExists = true
-		}
-	}
-
-	if hookOrHijackExists {
-		// we will run something, not a noop
-		if err := m.runHookGuardForRestarting(context); err != nil {
-			return err
-		}
-		defer atomic.AddInt32(&m.runningHooks, -1)
-	} else if !hooksup.Always {
-		// a noop with no 'always' flag: bail
-		return nil
-	}
 
 	contextID := context.ID()
 	m.contextsMutex.Lock()
@@ -476,36 +444,31 @@ func (m *HookManager) runHook(context *Context, hooksup *HookSetup, tomb *tomb.T
 		return err
 	}
 
+	// some hooks get hijacked, e.g. the core configuration
+	var err error
 	var output []byte
-	for i, snap := range snaps {
-		// some hooks get hijacked, e.g. the core configuration
-		if f := m.hijacked(hooksup.Hook, snap); f != nil {
-			err = f(context)
-		} else if hooksExist[i] {
-			originalSnap := context.setup.Snap
-			context.setup.Snap = snap
-			output, err = runHook(context, tomb)
-			context.setup.Snap = originalSnap
-		}
-
-		if err != nil {
-			// TODO: telemetry about errors here
-			err = osutil.OutputErr(output, err)
-			if hooksup.IgnoreError {
-				context.Lock()
-				context.Errorf("ignoring failure in hook %q: %v", hooksup.Hook, err)
-				context.Unlock()
-			} else {
-				ignoreOriginalErr, handlerErr := context.Handler().Error(err)
-				if handlerErr != nil {
-					return handlerErr
-				}
-				if ignoreOriginalErr {
-					return nil
-				}
-
-				return fmt.Errorf("run hook %q: %v", hooksup.Hook, err)
+	if f := m.hijacked(hooksup.Hook, hooksup.Snap); f != nil {
+		err = f(context)
+	} else if hookExists {
+		output, err = runHook(context, tomb)
+	}
+	if err != nil {
+		// TODO: telemetry about errors here
+		err = osutil.OutputErr(output, err)
+		if hooksup.IgnoreError {
+			context.Lock()
+			context.Errorf("ignoring failure in hook %q: %v", hooksup.Hook, err)
+			context.Unlock()
+		} else {
+			ignoreOriginalErr, handlerErr := context.Handler().Error(err)
+			if handlerErr != nil {
+				return handlerErr
 			}
+			if ignoreOriginalErr {
+				return nil
+			}
+
+			return fmt.Errorf("run hook %q: %v", hooksup.Hook, err)
 		}
 	}
 

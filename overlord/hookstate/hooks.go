@@ -30,7 +30,6 @@ import (
 	"github.com/snapcore/snapd/overlord/configstate/config"
 	"github.com/snapcore/snapd/overlord/snapstate"
 	"github.com/snapcore/snapd/overlord/state"
-	"github.com/snapcore/snapd/strutil"
 )
 
 func init() {
@@ -330,15 +329,6 @@ func SetupRemoveHook(st *state.State, snapName string) *state.Task {
 	return task
 }
 
-type MultiplexHandler struct {
-	SnapHookHandler
-	Ctx *Context
-}
-
-func (h *MultiplexHandler) Multiplex() []string {
-	return strutil.CommaSeparatedList(h.Ctx.setup.Snap)
-}
-
 func setupHooks(hookMgr *HookManager) {
 	handlerGenerator := func(context *Context) Handler {
 		return &SnapHookHandler{}
@@ -353,6 +343,6 @@ func setupHooks(hookMgr *HookManager) {
 	hookMgr.Register(regexp.MustCompile("^remove$"), handlerGenerator)
 	hookMgr.Register(regexp.MustCompile("^gate-auto-refresh$"), gateAutoRefreshHandlerGenerator)
 	hookMgr.Register(regexp.MustCompile("^.+-view-changed$"), ViewChangedHandlerGenerator)
-	hookMgr.Register(regexp.MustCompile("^change-registry$"), ChangeRegistryHandlerGenerator)
-	hookMgr.Register(regexp.MustCompile("^save-registry$"), SaveRegistryHandlerGenerator)
+	hookMgr.Register(regexp.MustCompile("^change-registry-.+$"), ChangeRegistryHandlerGenerator)
+	hookMgr.Register(regexp.MustCompile("^save-registry-.+$"), SaveRegistryHandlerGenerator)
 }

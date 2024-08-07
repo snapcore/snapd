@@ -33,6 +33,8 @@ execute: |
     exit
   fi
 
+  # TODO: change the snap hooks to match the new per plug format
+
   snap ack "$TESTSLIB/assertions/developer1-network.registry"
   "$TESTSTOOLS"/snaps-state install-local test-manager-snap
   "$TESTSTOOLS"/snaps-state install-local test-snap

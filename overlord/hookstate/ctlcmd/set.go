@@ -31,9 +31,8 @@ import (
 	"github.com/snapcore/snapd/overlord/configstate/config"
 	"github.com/snapcore/snapd/overlord/hookstate"
 	"github.com/snapcore/snapd/overlord/registrystate"
+	"github.com/snapcore/snapd/overlord/state"
 )
-
-var registrystateRegistryTransaction = registrystate.RegistryTransaction
 
 type setCommand struct {
 	baseCommand
@@ -231,19 +230,55 @@ func setRegistryValues(ctx *hookstate.Context, plugName string, requests map[str
 	ctx.Lock()
 	defer ctx.Unlock()
 
-	if !ctx.IsEphemeral() && ctx.HookName() != "change-registry" {
-		return fmt.Errorf("cannot modify registry data in non \"change-registry\" hook: %s", ctx.HookName())
+	// check if we're already running in the context of a committing transaction
+	ongoingTx := !ctx.IsEphemeral() && registrystate.IsRegistryHook(ctx)
+
+	if ongoingTx && !strings.HasPrefix(ctx.HookName(), "change-registry-") {
+		return fmt.Errorf("cannot modify registry in %q hook", ctx.HookName())
 	}
 
 	view, err := getRegistryView(ctx, plugName)
 	if err != nil {
-		return fmt.Errorf("cannot set registry: %v", err)
+		return fmt.Errorf("cannot modify registry: cannot get registry view for plug %s: %v", plugName, err)
 	}
 
-	tx, err := registrystateRegistryTransaction(ctx, view.Registry())
+	var tx *registrystate.Transaction
+	var commitTask *state.Task
+	if ongoingTx {
+		t, _ := ctx.Task()
+		var err error
+		tx, commitTask, err = registrystate.GetTransaction(t)
+		if err != nil {
+			return fmt.Errorf("cannot modify registry view %s: cannot get transaction: %v", plugName, err)
+		}
+	} else {
+		var err error
+		tx, err = registrystate.NewTransaction(ctx.State(), view.Registry().Account, view.Registry().Name)
+		if err != nil {
+			return fmt.Errorf("cannot modify registry view %s: cannot create transaction: %v", plugName, err)
+		}
+	}
+
+	err = registrystate.SetViaViewInTx(tx, view, requests)
 	if err != nil {
 		return err
 	}
 
-	return registrystate.SetViaViewInTx(tx, view, requests)
+	if ongoingTx {
+		// running in a registry hook context, save the change to the transaction
+		registrystate.SetTransaction(commitTask, tx)
+	} else {
+		// not running in an existing registry hook context, so create the commit
+		// tasks and wait
+		readyChan, err := registrystate.CommitTransaction(ctx, tx, view.Registry(), plugName)
+		if err != nil {
+			return err
+		}
+
+		ctx.Unlock()
+		<-readyChan
+		ctx.Lock()
+	}
+
+	return nil
 }
