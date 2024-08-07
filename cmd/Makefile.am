@@ -260,6 +260,15 @@ endif
 EXTRA_DIST += snap-confine/snap-confine.rst
 EXTRA_DIST += snap-confine/snap-confine.apparmor.in
 
+BUILT_SOURCES = snap-confine/nvidia-globs.c
+CLEANFILES += snap-confine/nvidia-globs.c
+
+snap-confine/nvidia-globs.c: snap-confine/gen-nvidia-globs/main.go snap-confine/gen-nvidia-globs/globs.c.tmpl | snap-confine
+	go run $< >$@
+snap-confine:
+	mkdir $@
+snap-confine/mount-support-nvidia.c: | snap-confine/nvidia-globs.c
+
 snap_confine_snap_confine_SOURCES = \
 	snap-confine/cookie-support.c \
 	snap-confine/cookie-support.h \
