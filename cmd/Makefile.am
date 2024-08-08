@@ -25,7 +25,7 @@ subdirs = \
 		  system-shutdown
 
 # Run check-syntax when checking
-# TODO: conver those to autotools-style tests later
+# TODO: convert those to autotools-style tests later
 check: check-unit-tests
 
 # Force particular coding style on all source and header files.
@@ -260,6 +260,15 @@ endif
 EXTRA_DIST += snap-confine/snap-confine.rst
 EXTRA_DIST += snap-confine/snap-confine.apparmor.in
 
+BUILT_SOURCES = snap-confine/nvidia-globs.c
+CLEANFILES += snap-confine/nvidia-globs.c
+
+snap-confine/nvidia-globs.c: snap-confine/gen-nvidia-globs/main.go snap-confine/gen-nvidia-globs/globs.c.tmpl | snap-confine
+	go run $< >$@
+snap-confine:
+	mkdir $@
+snap-confine/mount-support-nvidia.c: | snap-confine/nvidia-globs.c
+
 snap_confine_snap_confine_SOURCES = \
 	snap-confine/cookie-support.c \
 	snap-confine/cookie-support.h \
@@ -292,7 +301,7 @@ snap_confine_snap_confine_LDADD += $(snap_confine_snap_confine_extra_libs)
 snap_confine_snap_confine_STATIC =
 # use a separate variable instead of snap_confine_snap_confine_LDADD to collect
 # all external libraries, this way it can be reused in
-# snap_confine_snap_confine_debug_LDADD withouth applying any text
+# snap_confine_snap_confine_debug_LDADD without applying any text
 # transformations
 snap_confine_snap_confine_extra_libs = $(LIBUDEV_LIBS) -ldl
 
