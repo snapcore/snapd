@@ -22,6 +22,7 @@ package wrappers
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -268,17 +269,14 @@ func findSnapDesktopFileIDs(s *snap.Info) (map[string]bool, error) {
 	// desktop-file-ids must be a list of strings
 	desktopFileIDs, ok := attrVal.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf(`internal error: "desktop-file-ids" must be a list of strings`)
-	}
-	if len(desktopFileIDs) == 0 {
-		return nil, nil
+		return nil, errors.New(`internal error: "desktop-file-ids" must be a list of strings`)
 	}
 
 	desktopFileIDsMap := make(map[string]bool, len(desktopFileIDs))
 	for _, val := range desktopFileIDs {
 		desktopFileID, ok := val.(string)
 		if !ok {
-			return nil, fmt.Errorf(`internal error: "desktop-file-ids" must be a list of strings`)
+			return nil, errors.New(`internal error: "desktop-file-ids" must be a list of strings`)
 		}
 		desktopFileIDsMap[desktopFileID] = true
 	}
@@ -302,7 +300,7 @@ func deriveDesktopFilesContent(s *snap.Info, desktopFileIDs map[string]bool) (ma
 		// Don't mangle desktop files if listed under desktop-file-ids attribute
 		// XXX: Do we want to fail if a desktop-file-ids entry doesn't
 		// have a corresponding file?
-		if _, ok := desktopFileIDs[strings.TrimSuffix(base, ".desktop")]; !ok {
+		if !desktopFileIDs[strings.TrimSuffix(base, ".desktop")] {
 			// FIXME: don't blindly use the snap desktop filename, mangle it
 			// but we can't just use the app name because a desktop file
 			// may call the same app with multiple parameters, e.g.
@@ -325,17 +323,15 @@ func readSnapInstanceName(desktopFile string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer file.Close()
+
 	scanner := bufio.NewScanner(file)
 	for i := 0; scanner.Scan(); i++ {
-		bline := scanner.Bytes()
-		if !bytes.HasPrefix(bline, []byte("X-SnapInstanceName=")) {
+		bline := scanner.Text()
+		if !strings.HasPrefix(bline, "X-SnapInstanceName=") {
 			continue
 		}
-		tokens := strings.SplitN(string(bline), "=", 2)
-		if len(tokens) != 2 {
-			return "", fmt.Errorf("internal error: invalid X-SnapInstanceName entry in %q", desktopFile)
-		}
-		return tokens[1], nil
+		return strings.TrimPrefix(bline, "X-SnapInstanceName="), nil
 	}
 
 	return "", fmt.Errorf("cannot find X-SnapInstanceName entry in %q", desktopFile)
@@ -351,20 +347,20 @@ func EnsureSnapDesktopFiles(snaps []*snap.Info) error {
 	}
 
 	var updated []string
-	for _, s := range snaps {
-		if s == nil {
+	for _, info := range snaps {
+		if info == nil {
 			return fmt.Errorf("internal error: snap info cannot be nil")
 		}
 
-		desktopFileIDs, err := findSnapDesktopFileIDs(s)
+		desktopFileIDs, err := findSnapDesktopFileIDs(info)
 		if err != nil {
 			return err
 		}
-		desktopFilesGlobs := []string{fmt.Sprintf("%s_*.desktop", s.DesktopPrefix())}
+		desktopFilesGlobs := []string{fmt.Sprintf("%s_*.desktop", info.DesktopPrefix())}
 		for desktopFileID := range desktopFileIDs {
 			desktopFilesGlobs = append(desktopFilesGlobs, desktopFileID+".desktop")
 		}
-		content, err := deriveDesktopFilesContent(s, desktopFileIDs)
+		content, err := deriveDesktopFilesContent(info, desktopFileIDs)
 		if err != nil {
 			return err
 		}
@@ -383,15 +379,15 @@ func EnsureSnapDesktopFiles(snaps []*snap.Info) error {
 
 			base := filepath.Base(desktopFile)
 			_, hasTarget := content[base]
-			if hasTarget && instanceName != s.InstanceName() {
+			if hasTarget && instanceName != info.InstanceName() {
 				// Check if a target desktop file belongs to another snap
 				return fmt.Errorf("cannot install %q: %q already exists for another snap", base, desktopFile)
 			}
-			hasDesktopPrefix, err := filepath.Match(fmt.Sprintf("%s_*.desktop", s.DesktopPrefix()), base)
+			hasDesktopPrefix, err := filepath.Match(fmt.Sprintf("%s_*.desktop", info.DesktopPrefix()), base)
 			if err != nil {
 				return err
 			}
-			if instanceName == s.InstanceName() && !hasTarget && !hasDesktopPrefix {
+			if instanceName == info.InstanceName() && !hasTarget && !hasDesktopPrefix {
 				// An unmangled desktop file existed and is no longer used by the snap
 				// Let's include it in glob patterns space to ensure it is removed
 				desktopFilesGlobs = append(desktopFilesGlobs, base)

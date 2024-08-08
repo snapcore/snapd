@@ -104,18 +104,23 @@ func (s *desktopSuite) TestEnsurePackageDesktopFiles(c *C) {
 	c.Assert(osutil.FileExists(oldDesktopFilePath), Equals, false)
 }
 
-func (s *desktopSuite) TestEnsurePackageDesktopFilesWithDesktopIDs(c *C) {
+func (s *desktopSuite) testEnsurePackageDesktopFilesWithDesktopInterface(c *C, hasDesktopFileIDs bool) {
 	var desktopAppYaml = `
 name: foo
 version: 1.0
 plugs:
   desktop:
-    desktop-file-ids: [org.example.Foo]
 `
+	if hasDesktopFileIDs {
+		desktopAppYaml += "\n    desktop-file-ids: [org.example.Foo]"
+	}
 	info := snaptest.MockSnap(c, desktopAppYaml, &snap.SideInfo{Revision: snap.R(11)})
 	c.Assert(info.Plugs["desktop"], NotNil)
 
-	expectedDesktopFilePath1 := filepath.Join(dirs.SnapDesktopFilesDir, "org.example.Foo.desktop")
+	expectedDesktopFilePath1 := filepath.Join(dirs.SnapDesktopFilesDir, "foo_org.example.Foo.desktop")
+	if hasDesktopFileIDs {
+		expectedDesktopFilePath1 = filepath.Join(dirs.SnapDesktopFilesDir, "org.example.Foo.desktop")
+	}
 	c.Assert(osutil.FileExists(expectedDesktopFilePath1), Equals, false)
 	expectedDesktopFilePath2 := filepath.Join(dirs.SnapDesktopFilesDir, "foo_foobar.desktop")
 	c.Assert(osutil.FileExists(expectedDesktopFilePath2), Equals, false)
@@ -130,8 +135,6 @@ plugs:
 	c.Assert(err, IsNil)
 
 	for _, expectedDesktopFilePath := range []string{expectedDesktopFilePath1, expectedDesktopFilePath2} {
-		c.Assert(osutil.FileExists(expectedDesktopFilePath2), Equals, true)
-
 		stat, err := os.Stat(expectedDesktopFilePath)
 		c.Assert(err, IsNil)
 		c.Assert(stat.Mode().Perm(), Equals, os.FileMode(0644))
@@ -141,6 +144,40 @@ plugs:
 
 		sanitizedDesktopFileContent := wrappers.SanitizeDesktopFile(info, expectedDesktopFilePath, mockDesktopFile)
 		c.Check(expectedDesktopFilePath, testutil.FileEquals, sanitizedDesktopFileContent)
+	}
+}
+
+func (s *desktopSuite) TestEnsurePackageDesktopFilesWithDesktopInterface(c *C) {
+	const hasDesktopFileIDs = false
+	s.testEnsurePackageDesktopFilesWithDesktopInterface(c, hasDesktopFileIDs)
+}
+
+func (s *desktopSuite) TestEnsurePackageDesktopFilesWithDesktopFileIDs(c *C) {
+	const hasDesktopFileIDs = true
+	s.testEnsurePackageDesktopFilesWithDesktopInterface(c, hasDesktopFileIDs)
+}
+
+func (s *desktopSuite) TestEnsurePackageDesktopFilesWithBadDesktopFileIDs(c *C) {
+	const desktopAppYamlTemplate = `
+name: foo
+version: 1.0
+plugs:
+  desktop:
+    desktop-file-ids: %s
+`
+
+	for _, tc := range []string{
+		"not-a-list-of-strings",
+		"1",
+		"true",
+		"[[string],1]",
+	} {
+		desktopAppYaml := fmt.Sprintf(desktopAppYamlTemplate, tc)
+		info := snaptest.MockSnap(c, desktopAppYaml, &snap.SideInfo{Revision: snap.R(11)})
+		c.Assert(info.Plugs["desktop"], NotNil)
+
+		err := wrappers.EnsureSnapDesktopFiles([]*snap.Info{info})
+		c.Assert(err, ErrorMatches, `internal error: "desktop-file-ids" must be a list of strings`)
 	}
 }
 
@@ -201,7 +238,7 @@ X-SnapInstanceName=bar`)
 }
 
 func (s *desktopSuite) testRemovePackageDesktopFiles(c *C, triggerErr bool) {
-	var desktopFileTemplate = `
+	const desktopFileTemplate = `
 [Desktop Entry]
 X-SnapInstanceName=%s
 Name=Test`
@@ -264,7 +301,7 @@ func (s *desktopSuite) TestParallelInstancesRemovePackageDesktopFiles(c *C) {
 	err := os.MkdirAll(dirs.SnapDesktopFilesDir, 0755)
 	c.Assert(err, IsNil)
 
-	var desktopFileTemplate = `
+	const desktopFileTemplate = `
 [Desktop Entry]
 Name=Test
 X-SnapInstanceName=%s`
@@ -340,10 +377,10 @@ func (s *desktopSuite) TestEnsurePackageDesktopFilesCleanupOnError(c *C) {
 	c.Check(osutil.FileExists(mockDesktopInstanceFilePath), Equals, true)
 }
 
-func (s *desktopSuite) TestTestEnsurePackageDesktopFilesCleansOldFiles(c *C) {
+func (s *desktopSuite) TestEnsurePackageDesktopFilesCleansOldFiles(c *C) {
 	info := snaptest.MockSnap(c, desktopAppYaml, &snap.SideInfo{Revision: snap.R(11)})
 
-	var desktopFileTemplate = `
+	const desktopFileTemplate = `
 [Desktop Entry]
 Name=Test
 X-SnapInstanceName=%s`
