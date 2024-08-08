@@ -117,7 +117,7 @@ func MockSecbootProvisionTPM(f func(mode secboot.TPMProvisionMode, lockoutAuthFi
 	return restore
 }
 
-func MockSecbootSealKeys(f func(keys []secboot.SealKeyRequest, params *secboot.SealKeysParams) error) (restore func()) {
+func MockSecbootSealKeys(f func(keys []secboot.SealKeyRequest, params *secboot.SealKeysParams) ([]byte, error)) (restore func()) {
 	old := secbootSealKeys
 	secbootSealKeys = f
 	return func() {
@@ -166,9 +166,6 @@ func (o *TrustedAssetsUpdateObserver) InjectChangedAsset(blName, assetName, hash
 	}
 }
 
-type BootAsset = bootAsset
-type BootChain = bootChain
-
 const (
 	BootChainEquivalent   = bootChainEquivalent
 	BootChainDifferent    = bootChainDifferent
@@ -180,7 +177,6 @@ var (
 	PredictableBootChainsEqualForReseal = predictableBootChainsEqualForReseal
 	BootAssetsToLoadChains              = bootAssetsToLoadChains
 	BootAssetLess                       = bootAssetLess
-	ReadBootChains                      = readBootChains
 
 	SetImageBootFlags = setImageBootFlags
 	NextBootFlags     = nextBootFlags
@@ -209,16 +205,12 @@ func SetBootFlagsInBootloader(flags []string, rootDir string) error {
 	return bl.SetBootVars(blVars)
 }
 
-func (b *bootChain) SecbootModelForSealing() secboot.ModelForSealing {
-	return b.modelForSealing()
+func (b *BootChain) SecbootModelForSealing() secboot.ModelForSealing {
+	return b.ModelForSealing()
 }
 
-func (b *bootChain) SetKernelBootFile(kbf bootloader.BootFile) {
-	b.kernelBootFile = kbf
-}
-
-func (b *bootChain) KernelBootFile() bootloader.BootFile {
-	return b.kernelBootFile
+func (b *BootChain) SetKernelBootFile(kbf bootloader.BootFile) {
+	b.KernelBootFile = kbf
 }
 
 func MockRebootArgsPath(argsPath string) (restore func()) {

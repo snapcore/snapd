@@ -48,12 +48,66 @@ func MockSecbootResealKeys(f func(params *secboot.ResealKeysParams) error) (rest
 	}
 }
 
+func modelEqual(a, b secboot.ModelForSealing) bool {
+	if a.Series() != b.Series() {
+		return false
+	}
+	if a.BrandID() != b.BrandID() {
+		return false
+	}
+	if a.Model() != b.Model() {
+		return false
+	}
+	if a.Classic() != b.Classic() {
+		return false
+	}
+	if a.Grade() != b.Grade() {
+		return false
+	}
+	if a.SignKeyID() != b.SignKeyID() {
+		return false
+	}
+	return true
+}
+
+func resealKeyForBootChainsHooks(rootdir string, params *boot.ResealKeyForBootChainsParams, expectReseal bool) error {
+	var models []secboot.ModelForSealing
+
+	addModel := func(new secboot.ModelForSealing) {
+		// TODO: make it more efficient
+		for _, m := range models {
+			if modelEqual(new, m) {
+				return
+			}
+		}
+		models = append(models, new)
+	}
+	for _, bootChain := range params.RunModeBootChains {
+		addModel(bootChain.ModelForSealing())
+	}
+	for _, bootChain := range params.RecoveryBootChainsForRunKey {
+		addModel(bootChain.ModelForSealing())
+	}
+	for _, bootChain := range params.RecoveryBootChains {
+		addModel(bootChain.ModelForSealing())
+	}
+
+	keys := []string{
+		device.DataSealedKeyUnder(boot.InitramfsBootEncryptionKeyDir),
+		device.FallbackDataSealedKeyUnder(boot.InitramfsSeedEncryptionKeyDir),
+		device.FallbackSaveSealedKeyUnder(boot.InitramfsSeedEncryptionKeyDir),
+	}
+
+	primaryKey := filepath.Join(boot.InstallHostFDESaveDir, "aux-key")
+
+	return secboot.ResealKeysWithFDESetupHook(keys, primaryKey, models)
+}
+
 // ResealKeyForBootChains reseals disk encryption keys with the given bootchains.
 func ResealKeyForBootChains(method device.SealingMethod, rootdir string, params *boot.ResealKeyForBootChainsParams, expectReseal bool) error {
 	switch method {
 	case device.SealingMethodFDESetupHook:
-		// FIXME: do something
-		return nil
+		return resealKeyForBootChainsHooks(rootdir, params, expectReseal)
 	case device.SealingMethodTPM, device.SealingMethodLegacyTPM:
 	default:
 		return fmt.Errorf("unknown key sealing method: %q", method)
