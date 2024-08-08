@@ -370,8 +370,6 @@ func componentTargetsFromActionResult(action string, sar store.SnapActionResult,
 	for _, comp := range requested {
 		res, ok := mapping[comp]
 		if !ok {
-			// TODO:COMPS: make sure this branch is tested when we add support for
-			// losing components during a refresh
 			// during a refresh, we will not install components that don't exist
 			// in the new revision
 			if action == "refresh" {
@@ -855,7 +853,11 @@ func (p *updatePlan) revisionChanges(st *state.State, opts Options) ([]*snap.Inf
 
 	changes := make([]*snap.Info, 0, len(updates))
 	for _, up := range updates {
-		if up.revisionSatisfied() {
+		ok, err := up.revisionSatisfied()
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			continue
 		}
 

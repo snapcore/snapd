@@ -6283,48 +6283,43 @@ func (s *snapmgrTestSuite) TestInstallInstanceManyComponentsUndoRunThrough(c *C)
 	s.testInstallComponentsRunThrough(c, snapName, instanceKey, []string{"test-component", "kernel-modules-component"}, undo)
 }
 
-func undoOps(instanceName string, snapRevision, prevRev snap.Revision, newComponents, prevComponents []string) []fakeOp {
-	snapName, _ := snap.SplitInstanceName(instanceName)
+func undoOps(instanceName string, newSequence, prevSequence *sequence.RevisionSideState) []fakeOp {
+	forRefresh := prevSequence != nil
 
-	forRefresh := !prevRev.Unset()
-	compRev := func(i int) snap.Revision {
-		if forRefresh {
-			return snap.R(i + 2)
-		}
-		return snap.R(i + 1)
-	}
-
-	var ops fakeOps
+	newComponents := newSequence.Components
 
 	installedKmods := make([]*snap.ComponentSideInfo, 0, len(newComponents))
-	for i, compName := range newComponents {
-		csi := snap.ComponentSideInfo{
-			Component: naming.NewComponentRef(snapName, compName),
-			Revision:  compRev(i),
+	for _, cs := range newComponents {
+		if cs.CompType == snap.KernelModulesComponent {
+			installedKmods = append(installedKmods, cs.SideInfo)
 		}
-		if strings.HasPrefix(newComponents[i], string(snap.KernelModulesComponent)) {
-			installedKmods = append(installedKmods, &csi)
-		}
+	}
+
+	var prevComponents []*sequence.ComponentState
+	if prevSequence != nil {
+		prevComponents = prevSequence.Components
 	}
 
 	prevInstalledKmods := make([]*snap.ComponentSideInfo, 0, len(prevComponents))
-	for i, compName := range prevComponents {
-		csi := snap.ComponentSideInfo{
-			Component: naming.NewComponentRef(snapName, compName),
-			Revision:  snap.R(i + 1),
-		}
-
-		if strings.HasPrefix(prevComponents[i], string(snap.KernelModulesComponent)) {
-			prevInstalledKmods = append(prevInstalledKmods, &csi)
+	for _, cs := range prevComponents {
+		if cs.CompType == snap.KernelModulesComponent {
+			prevInstalledKmods = append(prevInstalledKmods, cs.SideInfo)
 		}
 	}
 
+	var ops fakeOps
 	if len(installedKmods) > 0 || len(prevInstalledKmods) > 0 {
 		ops = append(ops, fakeOp{
 			op:           "prepare-kernel-modules-components",
 			currentComps: installedKmods,
 			finalComps:   prevInstalledKmods,
 		})
+	}
+
+	snapRevision := newSequence.Snap.Revision
+	var prevRevision snap.Revision
+	if forRefresh {
+		prevRevision = prevSequence.Snap.Revision
 	}
 
 	snapMount := filepath.Join(dirs.SnapMountDir, filepath.Join(instanceName, snapRevision.String()))
@@ -6337,9 +6332,10 @@ func undoOps(instanceName string, snapRevision, prevRev snap.Revision, newCompon
 	}}...)
 
 	for i := len(newComponents) - 1; i >= 0; i-- {
+		csi := newComponents[i].SideInfo
 		ops = append(ops, fakeOp{
 			op:   "unlink-component",
-			path: snap.ComponentMountDir(newComponents[i], compRev(i), instanceName),
+			path: snap.ComponentMountDir(csi.Component.ComponentName, csi.Revision, instanceName),
 		})
 	}
 
@@ -6353,7 +6349,7 @@ func undoOps(instanceName string, snapRevision, prevRev snap.Revision, newCompon
 	oldMount := "<no-old>"
 	oldSaveDir := "<no-old>"
 	if forRefresh {
-		oldMount = filepath.Join(dirs.SnapMountDir, filepath.Join(instanceName, prevRev.String()))
+		oldMount = filepath.Join(dirs.SnapMountDir, filepath.Join(instanceName, prevRevision.String()))
 		oldSaveDir = filepath.Join(dirs.SnapDataSaveDir, instanceName)
 	}
 
@@ -6384,18 +6380,29 @@ func undoOps(instanceName string, snapRevision, prevRev snap.Revision, newCompon
 	} else {
 		ops = append(ops, fakeOp{
 			op:   "link-snap",
-			path: filepath.Join(dirs.SnapMountDir, instanceName, prevRev.String()),
+			path: filepath.Join(dirs.SnapMountDir, instanceName, prevRevision.String()),
 		})
 	}
 
 	for i := len(newComponents) - 1; i >= 0; i-- {
-		csi := &snap.ComponentSideInfo{
-			Component: naming.NewComponentRef(snapName, newComponents[i]),
-			Revision:  compRev(i),
-		}
+		csi := newComponents[i].SideInfo
 
-		containerName := fmt.Sprintf("%s+%s", instanceName, newComponents[i])
-		filename := fmt.Sprintf("%s_%v.comp", containerName, csi.Revision)
+		compName := csi.Component.ComponentName
+		compRev := csi.Revision
+
+		containerName := fmt.Sprintf("%s+%s", instanceName, compName)
+		filename := fmt.Sprintf("%s_%v.comp", containerName, compRev)
+
+		// if the snap revision isn't changing, then we need to re-link the old
+		// component
+		if snapRevision == prevRevision {
+			oldCS := prevSequence.FindComponent(csi.Component)
+
+			ops = append(ops, []fakeOp{{
+				op:   "link-component",
+				path: snap.ComponentMountDir(compName, oldCS.SideInfo.Revision, instanceName),
+			}}...)
+		}
 
 		ops = append(ops, []fakeOp{{
 			op:                "undo-setup-component",
@@ -6408,16 +6415,18 @@ func undoOps(instanceName string, snapRevision, prevRev snap.Revision, newCompon
 		}}...)
 	}
 
-	ops = append(ops, []fakeOp{{
-		op:    "undo-setup-snap",
-		name:  instanceName,
-		stype: "app",
-		path:  snapMount,
-	}, {
-		op:   "remove-snap-dir",
-		name: instanceName,
-		path: filepath.Join(dirs.SnapMountDir, instanceName),
-	}}...)
+	if snapRevision != prevRevision {
+		ops = append(ops, []fakeOp{{
+			op:    "undo-setup-snap",
+			name:  instanceName,
+			stype: "app",
+			path:  snapMount,
+		}, {
+			op:   "remove-snap-dir",
+			name: instanceName,
+			path: filepath.Join(dirs.SnapMountDir, instanceName),
+		}}...)
+	}
 
 	return ops
 }
@@ -6456,17 +6465,25 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 		return snap.ComponentType(typ)
 	}
 
+	var componentStates []*sequence.ComponentState
+	for i, compName := range components {
+		componentStates = append(componentStates, sequence.NewComponentState(&snap.ComponentSideInfo{
+			Component: naming.NewComponentRef(snapName, compName),
+			Revision:  snap.R(i + 1),
+		}, compNameToType(compName)))
+	}
+
 	s.fakeStore.snapResourcesFn = func(info *snap.Info) []store.SnapResourceResult {
 		c.Assert(info.InstanceName(), DeepEquals, instanceName)
 		var results []store.SnapResourceResult
-		for i, compName := range components {
+		for _, cs := range componentStates {
 			results = append(results, store.SnapResourceResult{
 				DownloadInfo: snap.DownloadInfo{
-					DownloadURL: "http://example.com/" + compName,
+					DownloadURL: "http://example.com/" + cs.SideInfo.Component.ComponentName,
 				},
-				Name:      compName,
-				Revision:  i + 1,
-				Type:      fmt.Sprintf("component/%s", compNameToType(compName)),
+				Name:      cs.SideInfo.Component.ComponentName,
+				Revision:  cs.SideInfo.Revision.N,
+				Type:      fmt.Sprintf("component/%s", cs.CompType),
 				Version:   "1.0",
 				CreatedAt: "2024-01-01T00:00:00Z",
 			})
@@ -6492,8 +6509,10 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 	s.AddCleanup(snapstate.MockReadComponentInfo(func(
 		compMntDir string, snapInfo *snap.Info, csi *snap.ComponentSideInfo,
 	) (*snap.ComponentInfo, error) {
-		for i, compName := range components {
-			if compMntDir == snap.ComponentMountDir(compName, snap.R(i+1), instanceName) {
+		for _, cs := range componentStates {
+			compName := cs.SideInfo.Component.ComponentName
+			compRev := cs.SideInfo.Revision
+			if compMntDir == snap.ComponentMountDir(compName, compRev, instanceName) {
 				return &snap.ComponentInfo{}, nil
 			}
 		}
@@ -6579,26 +6598,23 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 	}}
 
 	// ops for mounting a component (but not yet linking it)
-	for i, compName := range components {
-		csi := snap.ComponentSideInfo{
-			Component: naming.NewComponentRef(snapName, compName),
-			Revision:  snap.R(i + 1),
-		}
-
+	for _, cs := range componentStates {
+		compName := cs.SideInfo.Component.ComponentName
+		compRev := cs.SideInfo.Revision
 		containerName := fmt.Sprintf("%s+%s", instanceName, compName)
-		filename := fmt.Sprintf("%s_%d.comp", containerName, i+1)
+		filename := fmt.Sprintf("%s_%d.comp", containerName, compRev.N)
 
 		expected = append(expected, []fakeOp{{
 			op:   "storesvc-download",
-			name: csi.Component.String(),
+			name: cs.SideInfo.Component.String(),
 		}, {
 			op:                "validate-component:Doing",
 			name:              instanceName,
 			revno:             snapRevision,
 			componentName:     compName,
 			componentPath:     filepath.Join(dirs.SnapBlobDir, filename),
-			componentRev:      csi.Revision,
-			componentSideInfo: csi,
+			componentRev:      compRev,
+			componentSideInfo: *cs.SideInfo,
 		}, {
 			op:                "setup-component",
 			containerName:     containerName,
@@ -6631,10 +6647,12 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 	}}...)
 
 	// ops for linking components
-	for i, compName := range components {
+	for _, cs := range componentStates {
+		compName := cs.SideInfo.Component.ComponentName
+		compRev := cs.SideInfo.Revision
 		expected = append(expected, []fakeOp{{
 			op:   "link-component",
-			path: snap.ComponentMountDir(compName, snap.R(i+1), instanceName),
+			path: snap.ComponentMountDir(compName, compRev, instanceName),
 		}}...)
 	}
 
@@ -6666,8 +6684,15 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 		})
 	}
 
+	expectedSeq := sequence.NewRevisionSideState(&snap.SideInfo{
+		RealName: snapName,
+		SnapID:   snapID,
+		Channel:  channel,
+		Revision: snapRevision,
+	}, componentStates)
+
 	if undo {
-		expected = append(expected, undoOps(instanceName, snapRevision, snap.Revision{}, components, nil)...)
+		expected = append(expected, undoOps(instanceName, expectedSeq, nil)...)
 	} else {
 		expected = append(expected, fakeOp{
 			op:    "cleanup-trash",
@@ -6703,19 +6728,8 @@ func (s *snapmgrTestSuite) testInstallComponentsRunThrough(c *C, snapName, insta
 			SnapID:   snapID,
 		})
 
-		var compst []*sequence.ComponentState
-		for i, compName := range components {
-			compst = append(compst, &sequence.ComponentState{
-				SideInfo: &snap.ComponentSideInfo{
-					Component: naming.NewComponentRef(snapName, compName),
-					Revision:  snap.R(i + 1),
-				},
-				CompType: compNameToType(compName),
-			})
-		}
-
 		// make sure that all of our components are accounted for
-		c.Assert(snapst.Sequence.Revisions[0].Components, DeepEquals, compst)
+		c.Assert(snapst.Sequence.Revisions[0].Components, DeepEquals, componentStates)
 
 		c.Check(snapstate.AuxStoreInfoFilename(snapID), testutil.FilePresent)
 	}
@@ -6808,11 +6822,17 @@ func (s *snapmgrTestSuite) testInstallComponentsFromPathRunThrough(c *C, snapNam
 		return snap.ComponentType(typ)
 	}
 
-	components := make(map[*snap.ComponentSideInfo]string, len(compNames))
+	compRevs := make(map[string]snap.Revision)
 	for i, compName := range compNames {
+		compRevs[compName] = snap.R(i + 1)
+	}
+
+	components := make(map[*snap.ComponentSideInfo]string, len(compNames))
+	var componentStates []*sequence.ComponentState
+	for _, compName := range compNames {
 		csi := &snap.ComponentSideInfo{
 			Component: naming.NewComponentRef(snapName, compName),
-			Revision:  snap.R(i + 1),
+			Revision:  compRevs[compName],
 		}
 
 		componentYaml := fmt.Sprintf(`component: %s
@@ -6821,13 +6841,14 @@ version: 1.0
 `, csi.Component, compNameToType(compName))
 
 		components[csi] = snaptest.MakeTestComponent(c, componentYaml)
+		componentStates = append(componentStates, sequence.NewComponentState(csi, compNameToType(compName)))
 	}
 
 	s.AddCleanup(snapstate.MockReadComponentInfo(func(
 		compMntDir string, snapInfo *snap.Info, csi *snap.ComponentSideInfo,
 	) (*snap.ComponentInfo, error) {
-		for i, compName := range compNames {
-			if compMntDir == snap.ComponentMountDir(compName, snap.R(i+1), instanceName) {
+		for _, compName := range compNames {
+			if compMntDir == snap.ComponentMountDir(compName, compRevs[compName], instanceName) {
 				return &snap.ComponentInfo{}, nil
 			}
 		}
@@ -6925,10 +6946,10 @@ components:
 		path: filepath.Join(dirs.SnapMountDir, filepath.Join(instanceName, snapRevision.String())),
 	}}...)
 
-	for i, compName := range compNames {
+	for _, compName := range compNames {
 		expected = append(expected, fakeOp{
 			op:   "link-component",
-			path: snap.ComponentMountDir(compName, snap.R(i+1), instanceName),
+			path: snap.ComponentMountDir(compName, compRevs[compName], instanceName),
 		})
 	}
 
@@ -6941,12 +6962,9 @@ components:
 	}}...)
 
 	kmodComps := make([]*snap.ComponentSideInfo, 0, len(components))
-	for i, compName := range compNames {
-		if strings.HasPrefix(compName, string(snap.KernelModulesComponent)) {
-			kmodComps = append(kmodComps, &snap.ComponentSideInfo{
-				Component: naming.NewComponentRef(snapName, compName),
-				Revision:  snap.R(i + 1),
-			})
+	for _, cs := range componentStates {
+		if cs.CompType == snap.KernelModulesComponent {
+			kmodComps = append(kmodComps, cs.SideInfo)
 		}
 	}
 
@@ -6958,8 +6976,10 @@ components:
 		})
 	}
 
+	expectedSeq := sequence.NewRevisionSideState(si, componentStates)
+
 	if undo {
-		expected = append(expected, undoOps(instanceName, snapRevision, snap.Revision{}, compNames, nil)...)
+		expected = append(expected, undoOps(instanceName, expectedSeq, nil)...)
 	} else {
 		expected = append(expected, fakeOp{
 			op:    "cleanup-trash",
@@ -6991,19 +7011,8 @@ components:
 			SnapID:   snapID,
 		})
 
-		var compst []*sequence.ComponentState
-		for i, compName := range compNames {
-			compst = append(compst, &sequence.ComponentState{
-				SideInfo: &snap.ComponentSideInfo{
-					Component: naming.NewComponentRef(snapName, compName),
-					Revision:  snap.R(i + 1),
-				},
-				CompType: compNameToType(compName),
-			})
-		}
-
 		// make sure that all of our components are accounted for
-		c.Assert(snapst.Sequence.Revisions[0].Components, DeepEquals, compst)
+		c.Assert(snapst.Sequence.Revisions[0].Components, DeepEquals, componentStates)
 
 		// if we requested that the snap be removed after install, then make
 		// sure it is gone. otherwise, make sure that it is still there
