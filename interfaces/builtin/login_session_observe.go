@@ -70,6 +70,12 @@ dbus (send)
     interface=org.freedesktop.DBus.Properties
     member=Get{,All},
 
+dbus (send)
+    bus=system
+    path=/org/freedesktop/login1{,/seat/*,/session/*,/user/*}
+    interface=org.freedesktop.DBus.Introspectable
+    member=Introspect,
+
 dbus (receive)
     bus=system
     path=/org/freedesktop/login1
