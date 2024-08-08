@@ -109,7 +109,7 @@ func (t *target) setups(st *state.State, opts Options) (SnapSetup, []ComponentSe
 			CompPath:     comp.CompPath,
 			DownloadInfo: comp.DownloadInfo,
 
-			componentInstallFlags: componentInstallFlags{
+			ComponentInstallFlags: ComponentInstallFlags{
 				// if we're removing the snap, then we should remove the
 				// components too
 				RemoveComponentPath:   flags.RemoveSnapPath,
@@ -584,6 +584,14 @@ func InstallOne(ctx context.Context, st *state.State, goal InstallGoal, opts Opt
 	return infos[0], tasksets[0], nil
 }
 
+func sortComponentsOnTargets(targets []target) {
+	for _, t := range targets {
+		sort.Slice(t.components, func(i, j int) bool {
+			return t.components[i].ComponentName() < t.components[j].ComponentName()
+		})
+	}
+}
+
 // InstallWithGoal installs the snap/set of snaps specified by the given
 // InstallGoal.
 //
@@ -622,13 +630,7 @@ func InstallWithGoal(ctx context.Context, st *state.State, goal InstallGoal, opt
 		return nil, nil, ErrExpectedOneSnap
 	}
 
-	for _, t := range targets {
-		// sort the components by name to ensure we always install components in the
-		// same order
-		sort.Slice(t.components, func(i, j int) bool {
-			return t.components[i].ComponentName() < t.components[j].ComponentName()
-		})
-	}
+	sortComponentsOnTargets(targets)
 
 	installInfos := make([]minimalInstallInfo, 0, len(targets))
 	for _, t := range targets {
@@ -998,6 +1000,8 @@ func UpdateWithGoal(ctx context.Context, st *state.State, goal UpdateGoal, filte
 		return nil, nil, err
 	}
 
+	sortComponentsOnTargets(plan.targets)
+
 	if opts.ExpectOneSnap && len(plan.targets) != 1 {
 		return nil, nil, ErrExpectedOneSnap
 	}
@@ -1234,10 +1238,6 @@ func (p *pathUpdateGoal) toUpdate(_ context.Context, st *state.State, opts Optio
 			return updatePlan{}, err
 		}
 
-		// TODO:COMPS: remove this once we are ready to handle components during
-		// refresh
-		t.components = nil
-
 		targets = append(targets, t)
 		names = append(names, sn.InstanceName)
 	}
@@ -1273,7 +1273,7 @@ func targetForPathSnap(update PathSnap, snapst SnapState, opts Options) (target,
 		return target{}, fmt.Errorf("cannot install local snap %q: %v != %v (revision mismatch)", update.InstanceName, update.RevOpts.Revision, si.Revision)
 	}
 
-	if update.RevOpts.Channel != "" && update.SideInfo.Channel != "" && update.RevOpts.Channel != update.SideInfo.Channel {
+	if update.RevOpts.Channel != "" && si.Channel != "" && update.RevOpts.Channel != si.Channel {
 		return target{}, fmt.Errorf("cannot install local snap %q: %v != %v (channel mismatch)", update.InstanceName, update.RevOpts.Channel, si.Channel)
 	}
 
@@ -1291,8 +1291,7 @@ func targetForPathSnap(update PathSnap, snapst SnapState, opts Options) (target,
 		update.RevOpts.Channel = update.SideInfo.Channel
 	}
 
-	channel, err := resolveChannel(update.InstanceName, trackingChannel, update.RevOpts.Channel, opts.DeviceCtx)
-	if err != nil {
+	if err := update.RevOpts.resolveChannel(update.InstanceName, trackingChannel, opts.DeviceCtx); err != nil {
 		return target{}, err
 	}
 
@@ -1304,7 +1303,7 @@ func targetForPathSnap(update PathSnap, snapst SnapState, opts Options) (target,
 	return target{
 		setup: SnapSetup{
 			SnapPath:  update.Path,
-			Channel:   channel,
+			Channel:   update.RevOpts.Channel,
 			CohortKey: update.RevOpts.CohortKey,
 		},
 		info:       info,
