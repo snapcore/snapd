@@ -644,6 +644,61 @@ version: 1
 
 }
 
+func (s *snapassertsSuite) TestCheckComponentProvenanceWithVerifiedRevision(c *C) {
+	digest := makeDigest(12)
+	size := uint64(len(fakeSnap(12)))
+	snapResRev := assertstest.FakeAssertion(map[string]interface{}{
+		"type":              "snap-resource-revision",
+		"authority-id":      s.dev1Acct.AccountID(),
+		"snap-id":           "snap-id-1",
+		"resource-name":     "comp1",
+		"resource-sha3-384": digest,
+		"developer-id":      s.dev1Acct.AccountID(),
+		"provenance":        "prov",
+		"resource-revision": "22",
+		"resource-size":     fmt.Sprintf("%d", size),
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}).(*asserts.SnapResourceRevision)
+	snapResRev2 := assertstest.FakeAssertion(map[string]interface{}{
+		"type":              "snap-resource-revision",
+		"authority-id":      s.dev1Acct.AccountID(),
+		"snap-id":           "snap-id-1",
+		"resource-name":     "comp1",
+		"resource-sha3-384": digest,
+		"developer-id":      s.dev1Acct.AccountID(),
+		"provenance":        "global-upload",
+		"resource-revision": "22",
+		"resource-size":     fmt.Sprintf("%d", size),
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}).(*asserts.SnapResourceRevision)
+	compPath := snaptest.MakeTestComponentWithFiles(c, "comp1", `component: snap+comp1
+type: test
+provenance: prov
+version: 1.0.2
+`, nil)
+	compPath2 := snaptest.MakeTestComponentWithFiles(c, "comp1", `component: snap+comp1
+type: test
+version: 1.0.2
+`, nil)
+
+	// matching
+	c.Check(snapasserts.CheckComponentProvenanceWithVerifiedRevision(compPath, snapResRev), IsNil)
+	c.Check(snapasserts.CheckComponentProvenanceWithVerifiedRevision(compPath2, snapResRev2), IsNil)
+
+	// mismatches
+	mismatches := []struct {
+		path         string
+		snapRev      *asserts.SnapResourceRevision
+		metadataProv string
+	}{
+		{compPath, snapResRev2, "prov"},
+		{compPath2, snapResRev, "global-upload"},
+	}
+	for _, mism := range mismatches {
+		c.Check(snapasserts.CheckComponentProvenanceWithVerifiedRevision(mism.path, mism.snapRev), ErrorMatches, fmt.Sprintf("component %q has been signed under provenance %q different from the metadata one: %q", mism.path, mism.snapRev.Provenance(), mism.metadataProv))
+	}
+}
+
 func (s *snapassertsSuite) TestDeriveSideInfoFromDigestAndSizeDelegatedSnap(c *C) {
 	withProv := snaptest.MakeTestSnapWithFiles(c, `name: with-prov
 version: 1
@@ -790,6 +845,154 @@ provenance: prov`, nil)
 
 	_, err = snapasserts.DeriveSideInfoFromDigestAndSize(withProv, digest, size, nil, s.localDB)
 	c.Check(err, ErrorMatches, `safely handling snaps with different provenance but same hash not yet supported`)
+}
+
+func (s *snapassertsSuite) TestDeriveComponentSideInfoFromDigestAndSize(c *C) {
+	compPath := snaptest.MakeTestComponentWithFiles(c, "comp1", `component: snap+comp1
+type: test
+version: 1.0.2
+`, nil)
+	digest, size, err := asserts.SnapFileSHA3_384(compPath)
+	c.Assert(err, IsNil)
+
+	// Make sure we error if no assertion
+	csi, err := snapasserts.DeriveComponentSideInfoFromDigestAndSize(
+		"comp1", "snap", "snap-id-1", compPath, digest, size, s.localDB)
+	c.Check(err, ErrorMatches, "snap-resource-revision assertion not found")
+	c.Check(csi, IsNil)
+
+	resRev, err := s.storeSigning.Sign(asserts.SnapResourceRevisionType, map[string]interface{}{
+		"type":              "snap-resource-revision",
+		"authority-id":      "can0nical",
+		"snap-id":           "snap-id-1",
+		"resource-name":     "comp1",
+		"resource-sha3-384": digest,
+		"developer-id":      s.dev1Acct.AccountID(),
+		"provenance":        "global-upload",
+		"resource-revision": "22",
+		"resource-size":     fmt.Sprintf("%d", size),
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}, nil, "")
+	c.Assert(err, IsNil)
+	err = s.localDB.Add(resRev)
+	c.Assert(err, IsNil)
+
+	csi, err = snapasserts.DeriveComponentSideInfoFromDigestAndSize(
+		"comp1", "snap", "snap-id-1", compPath, digest, size, s.localDB)
+	c.Check(err, IsNil)
+	c.Check(csi, DeepEquals, &snap.ComponentSideInfo{
+		Component: naming.NewComponentRef("snap", "comp1"),
+		Revision:  snap.R(22),
+	})
+}
+
+func (s *snapassertsSuite) TestDeriveComponentSideInfoFromDigestAndSizeWrongSize(c *C) {
+	compPath := snaptest.MakeTestComponentWithFiles(c, "comp1", `component: snap+comp1
+type: test
+version: 1.0.2
+`, nil)
+	digest, size, err := asserts.SnapFileSHA3_384(compPath)
+	c.Assert(err, IsNil)
+
+	resRev, err := s.storeSigning.Sign(asserts.SnapResourceRevisionType, map[string]interface{}{
+		"type":              "snap-resource-revision",
+		"authority-id":      "can0nical",
+		"snap-id":           "snap-id-1",
+		"resource-name":     "comp1",
+		"resource-sha3-384": digest,
+		"developer-id":      s.dev1Acct.AccountID(),
+		"provenance":        "global-upload",
+		"resource-revision": "22",
+		"resource-size":     fmt.Sprintf("%d", size+1),
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}, nil, "")
+	c.Assert(err, IsNil)
+	err = s.localDB.Add(resRev)
+	c.Assert(err, IsNil)
+
+	csi, err := snapasserts.DeriveComponentSideInfoFromDigestAndSize(
+		"comp1", "snap", "snap-id-1", compPath, digest, size, s.localDB)
+	c.Check(err, ErrorMatches, fmt.Sprintf(`resource "comp1" does not have the expected size according to signatures \(broken or tampered\): %d != %d`, size, size+1))
+	c.Check(csi, IsNil)
+}
+
+func (s *snapassertsSuite) TestDeriveComponentSideInfoFromDigestAndSizeWithProvenance(c *C) {
+	compPath := snaptest.MakeTestComponentWithFiles(c, "comp1", `component: snap+comp1
+type: test
+provenance: prov
+version: 1.0.2
+`, nil)
+	digest, size, err := asserts.SnapFileSHA3_384(compPath)
+	c.Assert(err, IsNil)
+
+	snapDecl, err := s.storeSigning.Sign(asserts.SnapDeclarationType, map[string]interface{}{
+		"series":       "16",
+		"snap-id":      "snap-id-1",
+		"snap-name":    "foo",
+		"publisher-id": s.dev1Acct.AccountID(),
+		"revision":     "1",
+		"revision-authority": []interface{}{
+			map[string]interface{}{
+				"account-id": s.dev1Acct.AccountID(),
+				"provenance": []interface{}{
+					"prov",
+					"prov2",
+				},
+				"on-store": []interface{}{
+					"store1",
+				},
+			},
+		},
+		"timestamp": time.Now().Format(time.RFC3339),
+	}, nil, "")
+	c.Assert(err, IsNil)
+	err = s.localDB.Add(snapDecl)
+	c.Assert(err, IsNil)
+
+	resRev, err := s.dev1Signing.Sign(asserts.SnapResourceRevisionType, map[string]interface{}{
+		"type":              "snap-resource-revision",
+		"authority-id":      s.dev1Acct.AccountID(),
+		"snap-id":           "snap-id-1",
+		"resource-name":     "comp1",
+		"resource-sha3-384": digest,
+		"developer-id":      s.dev1Acct.AccountID(),
+		"provenance":        "prov",
+		"resource-revision": "22",
+		"resource-size":     fmt.Sprintf("%d", size),
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}, nil, "")
+	c.Assert(err, IsNil)
+	err = s.localDB.Add(resRev)
+	c.Assert(err, IsNil)
+
+	csi, err := snapasserts.DeriveComponentSideInfoFromDigestAndSize(
+		"comp1", "snap", "snap-id-1", compPath, digest, size, s.localDB)
+	c.Check(err, IsNil)
+	c.Check(csi, DeepEquals, &snap.ComponentSideInfo{
+		Component: naming.NewComponentRef("snap", "comp1"),
+		Revision:  snap.R(22),
+	})
+
+	// Same hash but different provenance
+	resRev2, err := s.dev1Signing.Sign(asserts.SnapResourceRevisionType, map[string]interface{}{
+		"type":              "snap-resource-revision",
+		"authority-id":      s.dev1Acct.AccountID(),
+		"snap-id":           "snap-id-1",
+		"resource-name":     "comp1",
+		"resource-sha3-384": digest,
+		"developer-id":      s.dev1Acct.AccountID(),
+		"provenance":        "prov2",
+		"resource-revision": "22",
+		"resource-size":     fmt.Sprintf("%d", size),
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}, nil, "")
+	c.Assert(err, IsNil)
+	err = s.localDB.Add(resRev2)
+	c.Assert(err, IsNil)
+	csi, err = snapasserts.DeriveComponentSideInfoFromDigestAndSize(
+		"comp1", "snap", "snap-id-1", compPath, digest, size, s.localDB)
+	c.Check(err, ErrorMatches, "safely handling resources with different provenance but same hash not yet supported")
+	c.Check(csi, IsNil)
 }
 
 func (s *snapassertsSuite) TestCrossCheckResource(c *C) {
