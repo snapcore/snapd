@@ -29,6 +29,7 @@ import (
 
 	main "github.com/snapcore/snapd/cmd/snap-bootstrap"
 	"github.com/snapcore/snapd/dirs"
+	"github.com/snapcore/snapd/osutil"
 	"github.com/snapcore/snapd/systemd"
 	"github.com/snapcore/snapd/testutil"
 )
@@ -84,6 +85,16 @@ func (s *doSystemdMountSuite) TestDoSystemdMount(c *C) {
 			timeNowTimes:     []time.Time{testStart, testStart},
 			isMountedReturns: []bool{true},
 			comment:          "happy tmpfs",
+		},
+		{
+			what:  "",
+			where: "/run/mnt/data",
+			opts: &main.SystemdMountOptions{
+				Tmpfs: true,
+			},
+			timeNowTimes:     []time.Time{testStart, testStart},
+			isMountedReturns: []bool{true},
+			comment:          "happy tmpfs with empty what argument",
 		},
 		{
 			what:  "tmpfs",
@@ -182,6 +193,126 @@ func (s *doSystemdMountSuite) TestDoSystemdMount(c *C) {
 			isMountedReturns: []bool{true},
 			comment:          "happy ro",
 		},
+		{
+			// The What argument is ignored for overlay mounts but needs to be a path that exists.
+			what:  "/merged",
+			where: "/merged",
+			opts: &main.SystemdMountOptions{
+				Overlayfs: true,
+				LowerDirs: []string{"/lower"},
+				UpperDir:  "/upper",
+				WorkDir:   "/work",
+			},
+			timeNowTimes:     []time.Time{testStart, testStart},
+			isMountedReturns: []bool{true},
+			comment:          "happy overlay mount",
+		},
+		{
+			// The What argument is ignored for overlay mounts but needs to be a path that exists.
+			what:  "/merged",
+			where: "/merged",
+			opts: &main.SystemdMountOptions{
+				Overlayfs: true,
+				LowerDirs: []string{"/lower,"},
+				UpperDir:  "/upper",
+				WorkDir:   "/work",
+			},
+			timeNowTimes:     []time.Time{testStart, testStart},
+			isMountedReturns: []bool{true},
+			comment:          "happy overlay mount with lowerdir path containing a comma",
+		},
+		{
+			// The What argument is ignored for overlay mounts but needs to be a path that exists.
+			what:  "/merged",
+			where: "/merged",
+			opts: &main.SystemdMountOptions{
+				Overlayfs: true,
+				LowerDirs: []string{"/lower"},
+				UpperDir:  "/upper,",
+				WorkDir:   "/work",
+			},
+			timeNowTimes:     []time.Time{testStart, testStart},
+			isMountedReturns: []bool{true},
+			comment:          "happy overlay mount with upperdir path containing a comma",
+		},
+		{
+			// The What argument is ignored for overlay mounts but needs to be a path that exists.
+			what:  "/merged",
+			where: "/merged",
+			opts: &main.SystemdMountOptions{
+				Overlayfs: true,
+				LowerDirs: []string{"/lower"},
+				UpperDir:  "/upper",
+				WorkDir:   "/work,",
+			},
+			timeNowTimes:     []time.Time{testStart, testStart},
+			isMountedReturns: []bool{true},
+			comment:          "happy overlay mount with workdir path containing a comma",
+		},
+		{
+			// The What argument is ignored for overlay mounts but needs to be a path that exists.
+			what:  "/merged",
+			where: "/merged",
+			opts: &main.SystemdMountOptions{
+				Overlayfs: true,
+				LowerDirs: []string{"/lower1", "/lower2"},
+				UpperDir:  "/upper",
+				WorkDir:   "/work",
+			},
+			timeNowTimes:     []time.Time{testStart, testStart},
+			isMountedReturns: []bool{true},
+			comment:          "happy overlay mount with multiple lowerdirs for overlayfs",
+		},
+		{
+			// The What argument is ignored for overlay mounts but needs to be a path that exists.
+			what:  "/merged",
+			where: "/merged",
+			opts: &main.SystemdMountOptions{
+				Overlayfs: true,
+				LowerDirs: []string{"/lower1:", "/lower2:"},
+				UpperDir:  "/upper",
+				WorkDir:   "/work",
+			},
+			timeNowTimes:     []time.Time{testStart, testStart},
+			isMountedReturns: []bool{true},
+			comment:          "happy overlay mount with multiple lowerdirs that contain colons",
+		},
+		{
+			// The What argument is ignored for overlay mounts but needs to be a path that exists.
+			what:  "what",
+			where: "where",
+			opts: &main.SystemdMountOptions{
+				Overlayfs: true,
+				UpperDir:  "/upper",
+				WorkDir:   "/work",
+			},
+			expErr:  "cannot mount \"what\" at \"where\": missing arguments for overlayfs mount. lowerdir, upperdir, workdir are needed.",
+			comment: "overlayfs mount requested without specifying a lowerdir",
+		},
+		{
+			// The What argument is ignored for overlay mounts but needs to be a path that exists.
+			what:  "what",
+			where: "where",
+			opts: &main.SystemdMountOptions{
+				Overlayfs: true,
+				LowerDirs: []string{"/lower1"},
+				WorkDir:   "/work",
+			},
+			expErr:  "cannot mount \"what\" at \"where\": missing arguments for overlayfs mount. lowerdir, upperdir, workdir are needed.",
+			comment: "overlayfs mount requested without specifying an upperdir",
+		},
+		{
+			// The What argument is ignored for overlay mounts but needs to be a path that exists.
+			what:  "what",
+			where: "where",
+			opts: &main.SystemdMountOptions{
+				Overlayfs: true,
+				LowerDirs: []string{"/lower1"},
+				UpperDir:  "/upper",
+			},
+			expErr:  "cannot mount \"what\" at \"where\": missing arguments for overlayfs mount. lowerdir, upperdir, workdir are needed.",
+			comment: "overlayfs mount requested without specifying a workdir",
+		},
 	}
 
 	for _, t := range tt {
@@ -247,6 +378,11 @@ func (s *doSystemdMountSuite) TestDoSystemdMount(c *C) {
 			args := []string{
 				"systemd-mount", t.what, t.where, "--no-pager", "--no-ask-password",
 			}
+			if opts.Tmpfs {
+				args = []string{
+					"systemd-mount", "tmpfs", t.where, "--no-pager", "--no-ask-password",
+				}
+			}
 			if opts.Umount {
 				args = []string{
 					"systemd-mount", t.where, "--umount", "--no-pager", "--no-ask-password",
@@ -255,6 +391,7 @@ func (s *doSystemdMountSuite) TestDoSystemdMount(c *C) {
 			c.Assert(call[:len(args)], DeepEquals, args)
 
 			foundTypeTmpfs := false
+			foundTypeOverlayfs := false
 			foundFsckYes := false
 			foundFsckNo := false
 			foundNoBlock := false
@@ -263,11 +400,16 @@ func (s *doSystemdMountSuite) TestDoSystemdMount(c *C) {
 			foundBind := false
 			foundReadOnly := false
 			foundPrivate := false
+			foundOverlayLowerDir := false
+			foundOverlayUpperDir := false
+			foundOverlayWorkDir := false
 
 			for _, arg := range call[len(args):] {
 				switch {
 				case arg == "--type=tmpfs":
 					foundTypeTmpfs = true
+				case arg == "--type=overlay":
+					foundTypeOverlayfs = true
 				case arg == "--fsck=yes":
 					foundFsckYes = true
 				case arg == "--fsck=no":
@@ -277,16 +419,22 @@ func (s *doSystemdMountSuite) TestDoSystemdMount(c *C) {
 				case arg == "--property=Before=initrd-fs.target":
 					foundBeforeInitrdfsTarget = true
 				case strings.HasPrefix(arg, "--options="):
-					for _, opt := range strings.Split(strings.TrimPrefix(arg, "--options="), ",") {
-						switch opt {
-						case "nosuid":
+					for _, opt := range osutil.SplitMountOptions(strings.TrimPrefix(arg, "--options=")) {
+						switch opt := opt; {
+						case opt == "nosuid":
 							foundNoSuid = true
-						case "bind":
+						case opt == "bind":
 							foundBind = true
-						case "ro":
+						case opt == "ro":
 							foundReadOnly = true
-						case "private":
+						case opt == "private":
 							foundPrivate = true
+						case strings.HasPrefix(opt, "lowerdir="):
+							foundOverlayLowerDir = true
+						case strings.HasPrefix(opt, "upperdir="):
+							foundOverlayUpperDir = true
+						case strings.HasPrefix(opt, "workdir="):
+							foundOverlayWorkDir = true
 						default:
 							c.Logf("Option '%s' unexpected", opt)
 							c.Fail()
@@ -298,6 +446,7 @@ func (s *doSystemdMountSuite) TestDoSystemdMount(c *C) {
 				}
 			}
 			c.Assert(foundTypeTmpfs, Equals, opts.Tmpfs)
+			c.Assert(foundTypeOverlayfs, Equals, opts.Overlayfs)
 			c.Assert(foundFsckYes, Equals, opts.NeedsFsck)
 			c.Assert(foundFsckNo, Equals, !opts.NeedsFsck)
 			c.Assert(foundNoBlock, Equals, opts.NoWait)
@@ -306,6 +455,9 @@ func (s *doSystemdMountSuite) TestDoSystemdMount(c *C) {
 			c.Assert(foundBind, Equals, opts.Bind)
 			c.Assert(foundReadOnly, Equals, opts.ReadOnly)
 			c.Assert(foundPrivate, Equals, opts.Private)
+			c.Assert(foundOverlayLowerDir, Equals, len(opts.LowerDirs) > 0)
+			c.Assert(foundOverlayUpperDir, Equals, len(opts.UpperDir) > 0)
+			c.Assert(foundOverlayWorkDir, Equals, len(opts.WorkDir) > 0)
 
 			// check that the overrides are present if opts.Ephemeral is false,
 			// or check the overrides are not present if opts.Ephemeral is true

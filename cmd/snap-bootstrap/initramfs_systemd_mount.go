@@ -75,6 +75,17 @@ type systemdMountOptions struct {
 	Private bool
 	// Umount the mountpoint
 	Umount bool
+	// Overlayfs indicates an overlay filesystem.
+	Overlayfs bool
+	// Directories to be used as lower layers of an overlay mount.
+	// It does not need to be on a writable filesystem.
+	LowerDirs []string
+	// A directory to be used as the upper layer of an overlay mount.
+	// This is normally on a writable filesystem.
+	UpperDir string
+	// A directory to be used as the workdir of an overlay mount.
+	// This needs to be an empty directory on the same filesystem as upperdir.
+	WorkDir string
 }
 
 // doSystemdMount will mount "what" at "where" using systemd-mount(1) with
@@ -95,6 +106,10 @@ func doSystemdMountImpl(what, where string, opts *systemdMountOptions) error {
 	whereEscaped := systemd.EscapeUnitNamePath(where)
 	unitName := whereEscaped + ".mount"
 
+	if opts.Tmpfs && what == "" {
+		what = "tmpfs"
+	}
+
 	args := []string{what, where, "--no-pager", "--no-ask-password"}
 
 	if opts.Umount {
@@ -103,6 +118,10 @@ func doSystemdMountImpl(what, where string, opts *systemdMountOptions) error {
 
 	if opts.Tmpfs {
 		args = append(args, "--type=tmpfs")
+	}
+
+	if opts.Overlayfs {
+		args = append(args, "--type=overlay")
 	}
 
 	if opts.NeedsFsck {
@@ -148,6 +167,24 @@ func doSystemdMountImpl(what, where string, opts *systemdMountOptions) error {
 	}
 	if opts.Private {
 		options = append(options, "private")
+	}
+	if opts.Overlayfs {
+		if len(opts.LowerDirs) <= 0 || len(opts.UpperDir) <= 0 || len(opts.WorkDir) <= 0 {
+			return fmt.Errorf("cannot mount %q at %q: missing arguments for overlayfs mount. lowerdir, upperdir, workdir are needed.", what, where)
+		}
+
+		var lowerDirs strings.Builder
+		for i, d := range opts.LowerDirs {
+			if i != 0 {
+				lowerDirs.WriteRune(':')
+			}
+			ed := strings.ReplaceAll(d, ",", `\,`)
+			ed = strings.ReplaceAll(ed, ":", `\:`)
+			lowerDirs.WriteString(ed)
+		}
+		options = append(options, fmt.Sprintf("lowerdir=%s", lowerDirs.String()))
+		options = append(options, fmt.Sprintf("upperdir=%s", strings.ReplaceAll(opts.UpperDir, ",", `\,`)))
+		options = append(options, fmt.Sprintf("workdir=%s", strings.ReplaceAll(opts.WorkDir, ",", `\,`)))
 	}
 	if len(options) > 0 {
 		args = append(args, "--options="+strings.Join(options, ","))
