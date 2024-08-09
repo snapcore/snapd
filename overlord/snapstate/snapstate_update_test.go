@@ -13980,52 +13980,69 @@ func (s *snapmgrTestSuite) TestUpdateWithComponentsBackToPrevRevision(c *C) {
 }
 
 func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThrough(c *C) {
-	const (
-		undo                  = false
-		refreshAppAwarenessUX = false
-		instanceKey           = ""
-	)
-	s.testUpdateWithComponentsRunThrough(c, instanceKey, []string{"test-component", "kernel-modules-component"}, refreshAppAwarenessUX, undo)
+	s.testUpdateWithComponentsRunThrough(c, updateWIthComponentsOpts{
+		components: []string{"test-component", "kernel-modules-component"},
+	})
 }
 
 func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThroughNoComponents(c *C) {
-	const (
-		undo                  = false
-		refreshAppAwarenessUX = false
-		instanceKey           = ""
-	)
-	s.testUpdateWithComponentsRunThrough(c, instanceKey, nil, refreshAppAwarenessUX, undo)
+	s.testUpdateWithComponentsRunThrough(c, updateWIthComponentsOpts{})
 }
 
 func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThroughUndo(c *C) {
-	const (
-		undo                  = true
-		refreshAppAwarenessUX = true
-		instanceKey           = ""
-	)
-	s.testUpdateWithComponentsRunThrough(c, instanceKey, []string{"test-component", "kernel-modules-component"}, refreshAppAwarenessUX, undo)
+	s.testUpdateWithComponentsRunThrough(c, updateWIthComponentsOpts{
+		components:            []string{"test-component", "kernel-modules-component"},
+		refreshAppAwarenessUX: true,
+		undo:                  true,
+	})
 }
 
 func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThroughInstanceKey(c *C) {
-	const (
-		undo                  = false
-		refreshAppAwarenessUX = true
-		instanceKey           = "key"
-	)
-	s.testUpdateWithComponentsRunThrough(c, instanceKey, []string{"test-component", "kernel-modules-component"}, refreshAppAwarenessUX, undo)
+	s.testUpdateWithComponentsRunThrough(c, updateWIthComponentsOpts{
+		instanceKey:           "key",
+		components:            []string{"test-component", "kernel-modules-component"},
+		refreshAppAwarenessUX: true,
+	})
 }
 
 func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThroughInstanceKeyUndo(c *C) {
-	const (
-		undo                  = true
-		refreshAppAwarenessUX = true
-		instanceKey           = "key"
-	)
-	s.testUpdateWithComponentsRunThrough(c, instanceKey, []string{"test-component", "kernel-modules-component"}, refreshAppAwarenessUX, undo)
+	s.testUpdateWithComponentsRunThrough(c, updateWIthComponentsOpts{
+		instanceKey:           "key",
+		components:            []string{"test-component", "kernel-modules-component"},
+		refreshAppAwarenessUX: true,
+		undo:                  true,
+	})
 }
 
-func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey string, components []string, refreshAppAwarenessUX, undo bool) {
-	if refreshAppAwarenessUX {
+func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThroughLoseComponents(c *C) {
+	s.testUpdateWithComponentsRunThrough(c, updateWIthComponentsOpts{
+		instanceKey:           "key",
+		components:            []string{"test-component", "kernel-modules-component"},
+		postRefreshComponents: []string{"test-component"},
+		refreshAppAwarenessUX: true,
+	})
+}
+
+func (s *snapmgrTestSuite) TestUpdateWithComponentsRunThroughLoseComponentsUndo(c *C) {
+	s.testUpdateWithComponentsRunThrough(c, updateWIthComponentsOpts{
+		instanceKey:           "key",
+		components:            []string{"test-component", "kernel-modules-component"},
+		postRefreshComponents: []string{"test-component"},
+		refreshAppAwarenessUX: true,
+		undo:                  true,
+	})
+}
+
+type updateWIthComponentsOpts struct {
+	instanceKey           string
+	components            []string
+	postRefreshComponents []string
+	refreshAppAwarenessUX bool
+	undo                  bool
+}
+
+func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, opts updateWIthComponentsOpts) {
+	if opts.refreshAppAwarenessUX {
 		s.enableRefreshAppAwarenessUX()
 	}
 
@@ -14037,9 +14054,24 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 
 	currentSnapRev := snap.R(7)
 	newSnapRev := snap.R(11)
-	instanceName := snap.InstanceName(snapName, instanceKey)
+	instanceName := snap.InstanceName(snapName, opts.instanceKey)
 
-	sort.Strings(components)
+	if opts.postRefreshComponents == nil {
+		opts.postRefreshComponents = opts.components
+	}
+
+	sort.Strings(opts.components)
+	sort.Strings(opts.postRefreshComponents)
+
+	originalCompRevisions := make(map[string]snap.Revision)
+	for i, compName := range opts.components {
+		originalCompRevisions[compName] = snap.R(i + 1)
+	}
+
+	updatedCompRevisions := make(map[string]snap.Revision)
+	for i, compName := range opts.components {
+		updatedCompRevisions[compName] = snap.R(i + 2)
+	}
 
 	compNameToType := func(name string) snap.ComponentType {
 		typ := strings.TrimSuffix(name, "-component")
@@ -14052,13 +14084,13 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 	s.fakeStore.snapResourcesFn = func(info *snap.Info) []store.SnapResourceResult {
 		c.Assert(info.InstanceName(), DeepEquals, instanceName)
 		var results []store.SnapResourceResult
-		for i, compName := range components {
+		for _, compName := range opts.postRefreshComponents {
 			results = append(results, store.SnapResourceResult{
 				DownloadInfo: snap.DownloadInfo{
 					DownloadURL: "http://example.com/" + compName,
 				},
 				Name:      compName,
-				Revision:  i + 2,
+				Revision:  updatedCompRevisions[compName].N,
 				Type:      fmt.Sprintf("component/%s", compNameToType(compName)),
 				Version:   "1.0",
 				CreatedAt: "2024-01-01T00:00:00Z",
@@ -14096,23 +14128,41 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 	s.state.Lock()
 	defer s.state.Unlock()
 
-	if instanceKey != "" {
+	if opts.instanceKey != "" {
 		tr := config.NewTransaction(s.state)
 		tr.Set("core", "experimental.parallel-instances", true)
 		tr.Commit()
 	}
 
-	seq := snapstatetest.NewSequenceFromSnapSideInfos([]*snap.SideInfo{&si})
+	currentSeq := snapstatetest.NewSequenceFromSnapSideInfos([]*snap.SideInfo{&si})
 
-	for i, comp := range components {
-		err := seq.AddComponentForRevision(currentSnapRev, &sequence.ComponentState{
+	var currentResources map[string]snap.Revision
+	for _, comp := range opts.components {
+		err := currentSeq.AddComponentForRevision(currentSnapRev, &sequence.ComponentState{
 			SideInfo: &snap.ComponentSideInfo{
 				Component: naming.NewComponentRef(snapName, comp),
-				Revision:  snap.R(i + 1),
+				Revision:  originalCompRevisions[comp],
 			},
 			CompType: compNameToType(comp),
 		})
 		c.Assert(err, IsNil)
+
+		if currentResources == nil {
+			currentResources = make(map[string]snap.Revision, len(opts.components))
+		}
+		currentResources[comp] = originalCompRevisions[comp]
+	}
+	currentComponentStates := currentSeq.Revisions[0].Components
+
+	expectedComponentStates := make([]*sequence.ComponentState, 0, len(opts.postRefreshComponents))
+	for _, comp := range opts.postRefreshComponents {
+		expectedComponentStates = append(expectedComponentStates, &sequence.ComponentState{
+			SideInfo: &snap.ComponentSideInfo{
+				Component: naming.NewComponentRef(snapName, comp),
+				Revision:  updatedCompRevisions[comp],
+			},
+			CompType: compNameToType(comp),
+		})
 	}
 
 	s.AddCleanup(snapstate.MockReadComponentInfo(func(
@@ -14128,11 +14178,11 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 
 	snapstate.Set(s.state, instanceName, &snapstate.SnapState{
 		Active:          true,
-		Sequence:        seq,
+		Sequence:        currentSeq,
 		Current:         si.Revision,
 		SnapType:        "app",
 		TrackingChannel: channel,
-		InstanceKey:     instanceKey,
+		InstanceKey:     opts.instanceKey,
 	})
 
 	ts, err := snapstate.Update(s.state, instanceName, nil, s.user.ID, snapstate.Flags{
@@ -14143,7 +14193,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 	chg := s.state.NewChange("refresh", "refresh a snap")
 	chg.AddAll(ts)
 
-	if undo {
+	if opts.undo {
 		last := lastWithLane(ts.Tasks())
 		c.Assert(last, NotNil)
 
@@ -14167,7 +14217,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 
 	s.settle(c)
 
-	if undo {
+	if opts.undo {
 		c.Assert(chg.Err(), NotNil, Commentf("change tasks:\n%s", printTasks(chg.Tasks())))
 	} else {
 		c.Assert(chg.Err(), IsNil, Commentf("change tasks:\n%s", printTasks(chg.Tasks())))
@@ -14183,6 +14233,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 				TrackingChannel: channel,
 				RefreshedDate:   refreshedDate,
 				Epoch:           snap.E("1*"),
+				Resources:       currentResources,
 			}},
 			userID: 1,
 		},
@@ -14229,26 +14280,23 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		},
 	}
 
-	for i, compName := range components {
-		csi := snap.ComponentSideInfo{
-			Component: naming.NewComponentRef(snapName, compName),
-			Revision:  snap.R(i + 2),
-		}
-
+	for _, cs := range expectedComponentStates {
+		compName := cs.SideInfo.Component.ComponentName
+		compRev := cs.SideInfo.Revision
 		containerName := fmt.Sprintf("%s+%s", instanceName, compName)
-		filename := fmt.Sprintf("%s_%v.comp", containerName, csi.Revision)
+		filename := fmt.Sprintf("%s_%v.comp", containerName, compRev)
 
 		expected = append(expected, []fakeOp{{
 			op:   "storesvc-download",
-			name: csi.Component.String(),
+			name: cs.SideInfo.Component.String(),
 		}, {
 			op:                "validate-component:Doing",
 			name:              instanceName,
 			revno:             newSnapRev,
 			componentName:     compName,
 			componentPath:     filepath.Join(dirs.SnapBlobDir, filename),
-			componentRev:      csi.Revision,
-			componentSideInfo: csi,
+			componentRev:      compRev,
+			componentSideInfo: *cs.SideInfo,
 		}, {
 			op:                "setup-component",
 			containerName:     containerName,
@@ -14256,7 +14304,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		}}...)
 	}
 
-	if !refreshAppAwarenessUX {
+	if !opts.refreshAppAwarenessUX {
 		expected = append(expected, fakeOp{
 			op:   "remove-snap-aliases",
 			name: instanceName,
@@ -14272,7 +14320,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		{
 			op:                 "unlink-snap",
 			path:               filepath.Join(dirs.SnapMountDir, instanceName, currentSnapRev.String()),
-			unlinkSkipBinaries: refreshAppAwarenessUX,
+			unlinkSkipBinaries: opts.refreshAppAwarenessUX,
 		},
 		{
 			op:   "copy-data",
@@ -14306,10 +14354,12 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		},
 	}...)
 
-	for i, compName := range components {
+	for _, cs := range expectedComponentStates {
+		compName := cs.SideInfo.Component.ComponentName
+		compRev := cs.SideInfo.Revision
 		expected = append(expected, fakeOp{
 			op:   "link-component",
-			path: snap.ComponentMountDir(compName, snap.R(i+2), instanceName),
+			path: snap.ComponentMountDir(compName, compRev, instanceName),
 		})
 	}
 
@@ -14324,18 +14374,17 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		},
 	}...)
 
-	currentKmodComps := make([]*snap.ComponentSideInfo, 0, len(components))
-	newKmodComps := make([]*snap.ComponentSideInfo, 0, len(components))
-	for i, compName := range components {
-		if strings.HasPrefix(components[i], string(snap.KernelModulesComponent)) {
-			currentKmodComps = append(currentKmodComps, &snap.ComponentSideInfo{
-				Component: naming.NewComponentRef(snapName, compName),
-				Revision:  snap.R(i + 1),
-			})
-			newKmodComps = append(newKmodComps, &snap.ComponentSideInfo{
-				Component: naming.NewComponentRef(snapName, compName),
-				Revision:  snap.R(i + 2),
-			})
+	currentKmodComps := make([]*snap.ComponentSideInfo, 0, len(currentComponentStates))
+	for _, cs := range currentComponentStates {
+		if cs.CompType == snap.KernelModulesComponent {
+			currentKmodComps = append(currentKmodComps, cs.SideInfo)
+		}
+	}
+
+	newKmodComps := make([]*snap.ComponentSideInfo, 0, len(expectedComponentStates))
+	for _, cs := range expectedComponentStates {
+		if cs.CompType == snap.KernelModulesComponent {
+			newKmodComps = append(newKmodComps, cs.SideInfo)
 		}
 	}
 
@@ -14347,8 +14396,17 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		})
 	}
 
-	if undo {
-		expected = append(expected, undoOps(instanceName, newSnapRev, currentSnapRev, components, components)...)
+	expectedSI := snap.SideInfo{
+		RealName: snapName,
+		Revision: newSnapRev,
+		SnapID:   snapID,
+		Channel:  channel,
+	}
+	expectedSideState := sequence.NewRevisionSideState(&expectedSI, expectedComponentStates)
+	originalSideState := currentSeq.Revisions[0]
+
+	if opts.undo {
+		expected = append(expected, undoOps(instanceName, expectedSideState, originalSideState)...)
 	} else {
 		expected = append(expected, fakeOp{
 			op:    "cleanup-trash",
@@ -14362,11 +14420,11 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		name:     snapName,
 		target:   filepath.Join(dirs.SnapBlobDir, fmt.Sprintf("%s_%v.snap", instanceName, newSnapRev)),
 	}}
-	for i, compName := range components {
+	for _, compName := range opts.postRefreshComponents {
 		downloads = append(downloads, fakeDownload{
 			macaroon: s.user.StoreMacaroon,
 			name:     fmt.Sprintf("%s+%s", snapName, compName),
-			target:   filepath.Join(dirs.SnapBlobDir, fmt.Sprintf("%s+%s_%d.comp", instanceName, compName, i+2)),
+			target:   filepath.Join(dirs.SnapBlobDir, fmt.Sprintf("%s+%s_%d.comp", instanceName, compName, updatedCompRevisions[compName].N)),
 		})
 	}
 
@@ -14402,7 +14460,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		Flags: snapstate.Flags{
 			Transaction: client.TransactionPerSnap,
 		},
-		InstanceKey:                     instanceKey,
+		InstanceKey:                     opts.instanceKey,
 		PreUpdateKernelModuleComponents: currentKmodComps,
 	})
 	c.Assert(snapsup.SideInfo, DeepEquals, &snap.SideInfo{
@@ -14417,12 +14475,12 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 	err = snapstate.Get(s.state, instanceName, &snapst)
 	c.Assert(err, IsNil)
 
-	if !undo {
+	if !opts.undo {
 		c.Assert(snapst.LastRefreshTime, NotNil)
 		c.Check(snapst.LastRefreshTime.Equal(now), Equals, true)
 		c.Assert(snapst.Active, Equals, true)
 		c.Assert(snapst.Sequence.Revisions, HasLen, 2)
-		c.Assert(snapst.Sequence.Revisions[0], DeepEquals, seq.Revisions[0])
+		c.Assert(snapst.Sequence.Revisions[0], DeepEquals, currentSeq.Revisions[0])
 
 		cand := sequence.NewRevisionSideState(&snap.SideInfo{
 			RealName: snapName,
@@ -14431,20 +14489,20 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 			Revision: newSnapRev,
 		}, nil)
 
-		for i, comp := range components {
+		for _, comp := range opts.postRefreshComponents {
 			cand.Components = append(cand.Components, &sequence.ComponentState{
 				SideInfo: &snap.ComponentSideInfo{
 					Component: naming.NewComponentRef(snapName, comp),
-					Revision:  snap.R(i + 2),
+					Revision:  updatedCompRevisions[comp],
 				},
 				CompType: compNameToType(comp),
 			})
 		}
 
 		// add our new revision to the sequence
-		seq.Revisions = append(seq.Revisions, cand)
+		currentSeq.Revisions = append(currentSeq.Revisions, cand)
 
-		c.Assert(snapst.Sequence, DeepEquals, seq)
+		c.Assert(snapst.Sequence, DeepEquals, currentSeq)
 
 		// we end up with the auxiliary store info
 		c.Check(snapstate.AuxStoreInfoFilename(snapID), testutil.FilePresent)
@@ -14452,7 +14510,7 @@ func (s *snapmgrTestSuite) testUpdateWithComponentsRunThrough(c *C, instanceKey 
 		// make sure everything is back to how it started
 		c.Assert(snapst.Active, Equals, true)
 		c.Assert(snapst.Sequence.Revisions, HasLen, 1)
-		c.Assert(snapst.Sequence.Revisions[0], DeepEquals, seq.Revisions[0])
+		c.Assert(snapst.Sequence.Revisions[0], DeepEquals, currentSeq.Revisions[0])
 	}
 }
 
