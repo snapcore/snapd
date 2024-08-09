@@ -1,5 +1,13 @@
 summary: Check that snapd failure handling works
 
+details: |
+    Snapd has a failure handling mechanism to auto revert when a refresh process fails.
+    This test verifies this mechanism by trying to install a broken snapd snap
+    multiple times to validate that if a device wants to keep trying a refresh to a
+    broken snapd snap for some reason, it will be able to revert and fallback
+    as many times as needed. Also checks that after the revert, the snapd snap
+    revision has to be the same as before the broken one was installed.
+
 prepare: |
     # on UC16, we should transition to using the snapd snap before running the 
     # test because it by default uses the core snap
@@ -59,7 +67,16 @@ execute: |
 
         echo "Verify that a random signal does not trigger the failure handling"
         echo "and snapd is just restarted"
-        systemctl kill --signal=SIGKILL snapd.service
+
+        if os.query is-core-le 22; then
+            systemctl kill --signal=SIGKILL snapd.service
+        else
+            # Work around systemctl kill issue, where it may fail when the cgroup
+            # is recycled after the main process is killed. This seems to be a bug
+            # in systemd made more common by faster cgroup recycling by the kernel.
+            # shellcheck disable=SC2046
+            kill -9 $(cat /sys/fs/cgroup/system.slice/snapd.service/cgroup.procs)
+        fi
 
         started_after_rand_sig="$("$TESTSTOOLS"/journal-state get-log -u snapd.failure | grep -c 'Started Failure handling of the snapd snap.' || true)"
 
