@@ -195,6 +195,54 @@ type Registry struct {
 	views   map[string]*View
 }
 
+// View returns an view from the registry.
+func (r *Registry) View(view string) *View {
+	return r.views[view]
+}
+
+// TODO: docs - get views could be affected by changes to the storage path
+func (r *Registry) GetAffectedViews(storagePath string) []*View {
+	var views []*View
+	for _, view := range r.views {
+		var includeView bool
+		for _, rule := range view.rules {
+			if affected(rule.originalStorage, storagePath) {
+				includeView = true
+				break
+			}
+		}
+
+		if includeView {
+			views = append(views, view)
+		}
+	}
+
+	return views
+}
+
+// TODO: needs thorough testing of all combos
+func affected(viewPath, storagePath string) bool {
+	viewKeys, storageKeys := strings.Split(viewPath, "."), strings.Split(storagePath, ".")
+
+	for i, viewKey := range viewKeys {
+		if isPlaceholder(viewKey) {
+			continue
+		}
+
+		if len(storageKeys) <= i {
+			// the view is a subpath of the modified storage path
+			return true
+		}
+
+		if storageKeys[i] != viewKey {
+			return false
+		}
+	}
+
+	// the view includes or matches the modified storage path
+	return true
+}
+
 // New returns a new registry with the specified views and their rules.
 func New(account string, registryName string, views map[string]interface{}, schema Schema) (*Registry, error) {
 	if len(views) == 0 {
@@ -434,11 +482,6 @@ func getPlaceholders(viewStr string) map[string]bool {
 	}
 
 	return placeholders
-}
-
-// View returns an view from the registry.
-func (d *Registry) View(view string) *View {
-	return d.views[view]
 }
 
 // View carries access rules for a particular view in a registry.

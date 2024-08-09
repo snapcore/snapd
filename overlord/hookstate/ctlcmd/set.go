@@ -31,6 +31,7 @@ import (
 	"github.com/snapcore/snapd/overlord/configstate/config"
 	"github.com/snapcore/snapd/overlord/hookstate"
 	"github.com/snapcore/snapd/overlord/registrystate"
+	"github.com/snapcore/snapd/overlord/state"
 )
 
 type setCommand struct {
@@ -229,18 +230,55 @@ func setRegistryValues(ctx *hookstate.Context, plugName string, requests map[str
 	ctx.Lock()
 	defer ctx.Unlock()
 
-	view, err := getRegistryView(ctx, plugName)
-	if err != nil {
-		return fmt.Errorf("cannot set registry: %v", err)
+	// check if we're already running in the context of a committing transaction
+	ongoingTx := !ctx.IsEphemeral() && registrystate.IsRegistryHook(ctx)
+
+	if ongoingTx && !strings.HasPrefix(ctx.HookName(), "change-registry-") {
+		return fmt.Errorf("cannot modify registry in %q hook", ctx.HookName())
 	}
 
-	tx, err := registrystate.RegistryTransaction(ctx, view.Registry())
+	view, err := getRegistryView(ctx, plugName)
+	if err != nil {
+		return fmt.Errorf("cannot modify registry: cannot get registry view for plug %s: %v", plugName, err)
+	}
+
+	var tx *registrystate.Transaction
+	var commitTask *state.Task
+	if ongoingTx {
+		t, _ := ctx.Task()
+		var err error
+		tx, commitTask, err = registrystate.GetTransaction(t)
+		if err != nil {
+			return fmt.Errorf("cannot modify registry view %s: cannot get transaction: %v", plugName, err)
+		}
+	} else {
+		var err error
+		tx, err = registrystate.NewTransaction(ctx.State(), view.Registry().Account, view.Registry().Name)
+		if err != nil {
+			return fmt.Errorf("cannot modify registry view %s: cannot create transaction: %v", plugName, err)
+		}
+	}
+
+	err = registrystate.SetViaViewInTx(tx, view, requests)
 	if err != nil {
 		return err
 	}
 
-	// TODO: once we have hooks, check that we don't set values in the wrong hooks
-	// (e.g., "registry-changed" hooks can only read data)
+	if ongoingTx {
+		// running in a registry hook context, save the change to the transaction
+		registrystate.SetTransaction(commitTask, tx)
+	} else {
+		// not running in an existing registry hook context, so create the commit
+		// tasks and wait
+		readyChan, err := registrystate.CommitTransaction(ctx, tx, view.Registry(), plugName)
+		if err != nil {
+			return err
+		}
 
-	return registrystate.SetViaViewInTx(tx, view, requests)
+		ctx.Unlock()
+		<-readyChan
+		ctx.Lock()
+	}
+
+	return nil
 }

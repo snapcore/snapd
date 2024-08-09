@@ -308,10 +308,7 @@ func (s *registryTestSuite) TestRegistryTransaction(c *C) {
 		return reg
 	}
 
-	s.state.Lock()
-	task := s.state.NewTask("test-task", "my test task")
 	setup := &hookstate.HookSetup{Snap: "test-snap", Revision: snap.R(1), Hook: "test-hook"}
-	s.state.Unlock()
 	mockHandler := hooktest.NewMockHandler()
 
 	type testcase struct {
@@ -345,7 +342,7 @@ func (s *registryTestSuite) TestRegistryTransaction(c *C) {
 	}
 
 	for _, tc := range tcs {
-		ctx, err := hookstate.NewContext(task, task.State(), setup, mockHandler, "")
+		ctx, err := hookstate.NewContext(nil, s.state, setup, mockHandler, "")
 		c.Assert(err, IsNil)
 		ctx.Lock()
 

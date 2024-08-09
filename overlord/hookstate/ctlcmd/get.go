@@ -364,14 +364,29 @@ func (c *getCommand) getRegistryValues(ctx *hookstate.Context, plugName string, 
 	ctx.Lock()
 	defer ctx.Unlock()
 
+	// check if we're already running in the context of a committing transaction
+	ongoingTx := !ctx.IsEphemeral() && registrystate.IsRegistryHook(ctx)
+
 	view, err := getRegistryView(ctx, plugName)
 	if err != nil {
 		return fmt.Errorf("cannot get registry: %v", err)
 	}
 
-	tx, err := registrystate.RegistryTransaction(ctx, view.Registry())
-	if err != nil {
-		return err
+	// TODO: duplicated to expedite this; refactor
+	var tx *registrystate.Transaction
+	if ongoingTx {
+		t, _ := ctx.Task()
+		var err error
+		tx, _, err = registrystate.GetTransaction(t)
+		if err != nil {
+			return fmt.Errorf("cannot set registry view %s: cannot get transaction: %v", plugName, err)
+		}
+	} else {
+		var err error
+		tx, err = registrystate.NewTransaction(ctx.State(), view)
+		if err != nil {
+			return fmt.Errorf("cannot set registry view %s: cannot create transaction: %v", plugName, err)
+		}
 	}
 
 	res, err := registrystate.GetViaViewInTx(tx, view, requests)

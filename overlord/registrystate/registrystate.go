@@ -20,11 +20,19 @@ package registrystate
 
 import (
 	"errors"
+	"fmt"
+	"sort"
+	"strings"
+
+	"gopkg.in/tomb.v2"
 
 	"github.com/snapcore/snapd/overlord/assertstate"
 	"github.com/snapcore/snapd/overlord/hookstate"
+	"github.com/snapcore/snapd/overlord/ifacestate/ifacerepo"
 	"github.com/snapcore/snapd/overlord/state"
 	"github.com/snapcore/snapd/registry"
+	"github.com/snapcore/snapd/snap"
+	"github.com/snapcore/snapd/strutil"
 )
 
 var assertstateRegistry = assertstate.Registry
@@ -58,7 +66,8 @@ func SetViaView(st *state.State, account, registryName, viewName string, request
 		}
 	}
 
-	tx, err := newTransaction(st, reg)
+	// TODO: in a `snap set` how to determine which change-registry-<plug> to call?
+	tx, err := NewTransaction(st, view)
 	if err != nil {
 		return err
 	}
@@ -67,11 +76,12 @@ func SetViaView(st *state.State, account, registryName, viewName string, request
 		return err
 	}
 
-	return tx.Commit()
+	// TODO: this also needs to spawn a commit hooks/tasks
+	return tx.Commit(st, reg.Schema)
 }
 
 // SetViaViewInTx uses the view to set the requests in the transaction's databag.
-func SetViaViewInTx(tx *registry.Transaction, view *registry.View, requests map[string]interface{}) error {
+func SetViaViewInTx(tx *Transaction, view *registry.View, requests map[string]interface{}) error {
 	for field, value := range requests {
 		var err error
 		if value == nil {
@@ -111,7 +121,8 @@ func GetViaView(st *state.State, account, registryName, viewName string, fields 
 		}
 	}
 
-	tx, err := newTransaction(st, reg)
+	// TODO: same question as SetViaView
+	tx, err := NewTransaction(st, view)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +132,7 @@ func GetViaView(st *state.State, account, registryName, viewName string, fields 
 
 // GetViaViewInTx uses the view to get values for the fields from the databag
 // in the transaction.
-func GetViaViewInTx(tx *registry.Transaction, view *registry.View, fields []string) (interface{}, error) {
+func GetViaViewInTx(tx *Transaction, view *registry.View, fields []string) (interface{}, error) {
 	if len(fields) == 0 {
 		val, err := view.Get(tx, "")
 		if err != nil {
@@ -161,52 +172,23 @@ func GetViaViewInTx(tx *registry.Transaction, view *registry.View, fields []stri
 	return results, nil
 }
 
-// newTransaction returns a transaction configured to read and write
-// databags from state as needed.
-func newTransaction(st *state.State, reg *registry.Registry) (*registry.Transaction, error) {
-	getter := bagGetter(st, reg)
-	setter := func(bag registry.JSONDataBag) error {
-		return updateDatabags(st, bag, reg)
-	}
-
-	tx, err := registry.NewTransaction(reg, getter, setter)
-	if err != nil {
-		return nil, err
-	}
-
-	return tx, nil
-}
-
-func bagGetter(st *state.State, reg *registry.Registry) registry.DatabagRead {
-	return func() (registry.JSONDataBag, error) {
-		databag, err := getDatabag(st, reg.Account, reg.Name)
-		if err != nil {
-			if !errors.Is(err, state.ErrNoState) {
-				return nil, err
-			}
-
-			databag = registry.NewJSONDataBag()
-		}
-		return databag, nil
-	}
-}
-
-func getDatabag(st *state.State, account, registryName string) (registry.JSONDataBag, error) {
+var readDatabag = func(st *state.State, account, registryName string) (registry.JSONDataBag, error) {
 	var databags map[string]map[string]registry.JSONDataBag
 	if err := st.Get("registry-databags", &databags); err != nil {
+		if errors.Is(err, &state.NoStateError{}) {
+			return registry.NewJSONDataBag(), nil
+		}
 		return nil, err
 	}
 
 	if databags[account] == nil || databags[account][registryName] == nil {
-		return nil, state.ErrNoState
+		return registry.NewJSONDataBag(), nil
 	}
+
 	return databags[account][registryName], nil
 }
 
-func updateDatabags(st *state.State, databag registry.JSONDataBag, reg *registry.Registry) error {
-	account := reg.Account
-	registryName := reg.Name
-
+var writeDatabag = func(st *state.State, databag registry.JSONDataBag, account, registryName string) error {
 	var databags map[string]map[string]registry.JSONDataBag
 	err := st.Get("registry-databags", &databags)
 	if err != nil && !errors.Is(err, state.ErrNoState) {
@@ -222,33 +204,310 @@ func updateDatabags(st *state.State, databag registry.JSONDataBag, reg *registry
 	return nil
 }
 
-type cachedRegistryTx struct {
-	account  string
-	registry string
-}
-
+// TODO: none of this applies anymore
 // RegistryTransaction returns the registry.Transaction cached in the context
 // or creates one and caches it, if none existed. The context must be locked by
 // the caller.
-func RegistryTransaction(ctx *hookstate.Context, reg *registry.Registry) (*registry.Transaction, error) {
-	key := cachedRegistryTx{
-		account:  reg.Account,
-		registry: reg.Name,
-	}
-	tx, ok := ctx.Cached(key).(*registry.Transaction)
-	if ok {
-		return tx, nil
+//func RegistryTransaction(ctx *hookstate.Context, reg *registry.Registry) (*Transaction, error) {
+//	key := cachedRegistryTx{
+//		account:  reg.Account,
+//		registry: reg.Name,
+//	}
+//	tx, ok := ctx.Cached(key).(*Transaction)
+//	if ok {
+//		return tx, nil
+//	}
+//
+//	var chg *state.Change
+//	if !ctx.IsEphemeral() {
+//		// running in the context of a hook (although not necessarily a registry hook)
+//		task, _ := ctx.Task()
+//
+//		tx, commitTask, err := GetTransaction(task)
+//		if err != nil && !errors.Is(err, &state.NoStateError{}) {
+//			return nil, err
+//		}
+//
+//		if commitTask != nil {
+//			// running in a registry hook, just make sure to save changes once its done
+//			ctx.OnDone(func() error {
+//				commitTask.Set("registry-transaction", tx)
+//				return nil
+//			})
+//
+//			ctx.Cache(key, tx)
+//			return tx, nil
+//		}
+//
+//		// running in a non-registry hook so we'll create the registry hooks/commit
+//		// and add them to the existing change
+//		chg = task.Change()
+//
+//		// TODO: this isn't imposing an order on the registry tasks because I'm not
+//		// sure whether we should chain them on just this one hook or all of them.
+//		// Should all registry changes in the install/configure hooks belong to one
+//		// single transaction? Or is there a reason to have one transaction per hook?
+//	}
+//
+//	// non-hook modification to registry, create tx
+//	st := ctx.State()
+//	tx, err := NewTransaction(st, view)
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	ctx.OnDone(func() error {
+//		paths := tx.AlteredPaths()
+//		if len(paths) == 0 {
+//			// nothing changed, nothing to commit
+//			return nil
+//		}
+//
+//		if chg == nil {
+//			chg = st.NewChange("commit-registry", fmt.Sprintf("Commit changes to registry \"%s/%s\"", reg.Account, tx.RegistryName))
+//		}
+//
+//		err := populateCommitChange(ctx, chg, tx, reg)
+//		if err != nil {
+//			return err
+//		}
+//
+//		// attach the change ID to the context, so the API knows when the changes
+//		// have been committed
+//		ctx.Cache("change-id", chg.ID())
+//		st.EnsureBefore(0)
+//
+//		return nil
+//	})
+//
+//	ctx.Cache(key, tx)
+//	return tx, nil
+//}
+
+func CreateCommitTasks(ctx *hookstate.Context, tx *Transaction, reg *registry.Registry, plugName string) error {
+	var chg *state.Change
+	if ctx.IsEphemeral() {
+		chg = ctx.State().NewChange("commit-registry", fmt.Sprintf("Commit changes to registry \"%s/%s\"", tx.RegistryAccount, tx.RegistryName))
+	} else {
+		// already checking this in ctlcmd/ but worth double checking
+		if IsRegistryHook(ctx) {
+			return fmt.Errorf("cannot create commit tasks: already running commit tasks")
+		}
+
+		// we're running in the context of a non-registry hook, add the tasks to that change
+		task, _ := ctx.Task()
+		chg = task.Change()
 	}
 
-	tx, err := newTransaction(ctx.State(), reg)
+	st := ctx.State()
+	commitTask := st.NewTask("commit-transaction", fmt.Sprintf("Commit changes to registry \"%s/%s\"", reg.Account, reg.Name))
+	commitTask.Set("registry-transaction", tx)
+	chg.AddTask(commitTask)
+
+	attachTx := func(t *state.Task) {
+		t.Set("commit-task", commitTask.ID())
+		chg.AddTask(t)
+	}
+
+	// add registry to the commit task, then put the task ID in the hooks tasks.
+	paths := tx.AlteredPaths()
+
+	affectedPlugs, err := getAffectedPlugs(st, reg, paths)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	ctx.OnDone(func() error {
-		return tx.Commit()
-	})
+	// TODO: possible TOCTOU issue here? check again in handlers Precondition
+	managers, err := getRegistryManagers(affectedPlugs)
+	if err != nil {
+		return err
+	}
 
-	ctx.Cache(key, tx)
-	return tx, nil
+	if len(managers) == 0 {
+		return fmt.Errorf("cannot commit changes to registry %s/%s: no manager snap installed", reg.Account, reg.Name)
+	}
+
+	managerNames := make([]string, 0, len(managers))
+	for name := range managers {
+		managerNames = append(managerNames, name)
+	}
+
+	// process the change/save hooks in a deterministic order (useful for testing
+	// and potentially for the snaps)
+	sort.Strings(managerNames)
+
+	var prev *state.Task
+	linkTask := func(t *state.Task) {
+		if prev != nil {
+			t.WaitFor(prev)
+		}
+		prev = t
+	}
+
+	for _, name := range managerNames {
+		manager := managers[name]
+		if _, ok := manager.Hooks["change-registry-"+plugName]; !ok {
+			continue
+		}
+
+		ignoreError := false
+		chgRegistryTask := setupRegistryHook(st, name, "change-registry-"+plugName, ignoreError)
+		attachTx(chgRegistryTask)
+		// run change-registry-<plug> hooks in a sequential, deterministic order
+		linkTask(chgRegistryTask)
+	}
+
+	for _, name := range managerNames {
+		manager := managers[name]
+		if _, ok := manager.Hooks["save-registry-"+plugName]; !ok {
+			continue
+		}
+
+		ignoreError := false
+		saveRegistryTask := setupRegistryHook(st, name, "save-registry-"+plugName, ignoreError)
+		attachTx(saveRegistryTask)
+		// TODO: for now also run save-registry-<plug> tasks sequentially, but might
+		// not be strictly necessary (review after rollback procedure is redone)
+		linkTask(saveRegistryTask)
+	}
+
+	// commit after managers save ephemeral data
+	linkTask(commitTask)
+
+	for snapName, plugs := range affectedPlugs {
+		if snapName == ctx.InstanceName() {
+			// the snap making the changes doesn't need to be notified
+			continue
+		}
+
+		for _, plug := range plugs {
+			ignoreError := true
+			task := setupRegistryHook(st, snapName, plug.Name+"-view-changed", ignoreError)
+			task.WaitFor(commitTask)
+			attachTx(task)
+		}
+	}
+
+	return nil
+}
+
+func getRegistryManagers(snapToPlugs map[string][]*snap.PlugInfo) (map[string]*snap.Info, error) {
+	managerSnaps := make(map[string]*snap.Info)
+	for snapName, plugs := range snapToPlugs {
+		for _, plug := range plugs {
+			var role string
+			if err := plug.Attr("role", &role); err != nil && !errors.Is(err, snap.AttributeNotFoundError{}) {
+				return nil, err
+			}
+
+			// snap is a manager for one of plugs so run change-registry for it
+			if role == "manager" {
+				managerSnaps[snapName] = plug.Snap
+				break
+			}
+		}
+	}
+
+	return managerSnaps, nil
+}
+
+func getAffectedPlugs(st *state.State, registry *registry.Registry, storagePaths []string) (map[string][]*snap.PlugInfo, error) {
+	var viewNames []string
+	for _, path := range storagePaths {
+		views := registry.GetAffectedViews(path)
+		for _, view := range views {
+			viewNames = append(viewNames, view.Name)
+		}
+	}
+
+	repo := ifacerepo.Get(st)
+	plugs := repo.AllPlugs("registry")
+
+	affectedPlugs := make(map[string][]*snap.PlugInfo)
+	for _, plug := range plugs {
+		conns, err := repo.Connected(plug.Snap.InstanceName(), plug.Name)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(conns) == 0 {
+			continue
+		}
+
+		var accAttr string
+		if err = plug.Attr("account", &accAttr); err != nil {
+			return nil, err
+		}
+
+		var viewAttr string
+		if err = plug.Attr("view", &viewAttr); err != nil {
+			return nil, err
+		}
+
+		registryName, viewName, ok := strings.Cut(viewAttr, "/")
+		if !ok {
+			// shouldn't be possible
+			return nil, fmt.Errorf("malformed \"view\" attribute in plug %s", plug.Name)
+		}
+
+		if accAttr != registry.Account || registryName != registry.Name || !strutil.ListContains(viewNames, viewName) {
+			continue
+		}
+
+		snapPlugs := affectedPlugs[plug.Snap.InstanceName()]
+		affectedPlugs[plug.Snap.InstanceName()] = append(snapPlugs, plug)
+	}
+
+	return affectedPlugs, nil
+}
+
+func (m *RegistryManager) doCommitTransaction(t *state.Task, _ *tomb.Tomb) error {
+	m.state.Lock()
+	defer m.state.Unlock()
+
+	tx, _, err := GetTransaction(t)
+	if err != nil {
+		return err
+	}
+
+	registryAssert, err := assertstateRegistry(t.State(), tx.RegistryAccount, tx.RegistryName)
+	if err != nil {
+		return err
+	}
+	schema := registryAssert.Registry().Schema
+
+	return tx.Commit(t.State(), schema)
+}
+
+// GetTransction returns the registry transaction associate with the task (even
+// if indirectly) and the task in which it was stored.
+func GetTransaction(t *state.Task) (*Transaction, *state.Task, error) {
+	var tx *Transaction
+	err := t.Get("registry-transaction", &tx)
+	if err == nil {
+		return tx, t, nil
+	} else if !errors.Is(err, &state.NoStateError{}) {
+		return nil, nil, err
+	}
+
+	var id string
+	err = t.Get("commit-task", &id)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ct := t.State().Task(id)
+	if ct == nil {
+		return nil, nil, fmt.Errorf("cannot find task %s", id)
+	}
+
+	if err := ct.Get("registry-transaction", &tx); err != nil {
+		return nil, nil, err
+	}
+
+	return tx, ct, nil
+}
+
+func SetTransaction(t *state.Task, tx *Transaction) {
+	t.Set("registry-transaction", tx)
 }

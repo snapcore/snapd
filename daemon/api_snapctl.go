@@ -20,7 +20,9 @@
 package daemon
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/jessevdk/go-flags"
 
@@ -28,7 +30,9 @@ import (
 	"github.com/snapcore/snapd/i18n"
 	"github.com/snapcore/snapd/jsonutil"
 	"github.com/snapcore/snapd/overlord/auth"
+	"github.com/snapcore/snapd/overlord/hookstate"
 	"github.com/snapcore/snapd/overlord/hookstate/ctlcmd"
+	"github.com/snapcore/snapd/overlord/state"
 )
 
 var (
@@ -96,9 +100,31 @@ func runSnapctl(c *Command, r *http.Request, user *auth.UserState) Response {
 
 	if context != nil && context.IsEphemeral() {
 		context.Lock()
-		defer context.Unlock()
-		if err := context.Done(); err != nil {
+		err := context.Done()
+		context.Unlock()
+		if err != nil {
 			return BadRequest(i18n.G("set failed: %v"), err)
+		}
+
+		chg, err := getRegistryCommitChange(c.d.state, context)
+		if err != nil {
+			return InternalError(err.Error())
+		}
+
+		if chg != nil {
+			// wait for registry commit
+			select {
+			case <-chg.Ready():
+				c.d.state.Lock()
+				if chg.Err() != nil {
+					// TODO: rethink this
+					stderr = []byte(chg.Err().Error())
+				}
+				c.d.state.Unlock()
+			case <-time.After(10 * time.Minute):
+				// TODO; reasonable timeout? hooks have large timeouts (default is 10m)
+				return BadRequest(i18n.G("registry commit timed out"))
+			}
 		}
 	}
 
@@ -108,4 +134,22 @@ func runSnapctl(c *Command, r *http.Request, user *auth.UserState) Response {
 	}
 
 	return SyncResponse(result)
+}
+
+func getRegistryCommitChange(st *state.State, ctx *hookstate.Context) (*state.Change, error) {
+	ctx.Lock()
+	defer ctx.Unlock()
+
+	chgIDVal := ctx.Cached("change-id")
+	if chgIDVal == nil {
+		return nil, nil
+	}
+
+	// wait for registry commit
+	chgID, ok := chgIDVal.(string)
+	if !ok {
+		return nil, fmt.Errorf(i18n.G("cannot read registry commit change ID: unexpected type %T"), chgIDVal)
+	}
+
+	return st.Change(chgID), nil
 }
