@@ -1307,6 +1307,7 @@ func (s *baseDeclSuite) TestValidity(c *C) {
 		"classic-support":                  true,
 		"core-support":                     true,
 		"custom-device":                    true,
+		"desktop":                          true,
 		"desktop-launch":                   true,
 		"dm-crypt":                         true,
 		"docker-support":                   true,
@@ -1824,4 +1825,28 @@ plugs:
 	cand.PlugSnapDeclaration = snapDecl
 	_, err = cand.CheckAutoConnect()
 	c.Check(err, IsNil)
+}
+
+func (s *baseDeclSuite) TestDesktopFileIDsOverride(c *C) {
+	ic := s.installPlugCand(c, "desktop", snap.TypeApp, `name: some-snap
+version: 0
+type: app
+plugs:
+  desktop:
+    desktop-file-ids: [org.example]
+`)
+	err := ic.Check()
+	c.Assert(err, ErrorMatches, `installation not allowed by "desktop" plug rule of interface "desktop"`)
+
+	const plugsOverride = `
+plugs:
+  desktop:
+    allow-installation:
+      plug-attributes:
+        desktop-file-ids:
+          - org.example
+`
+	ic.SnapDeclaration = s.mockSnapDecl(c, "some-snap", "some-snap-id", "canonical", plugsOverride)
+	err = ic.Check()
+	c.Assert(err, IsNil)
 }
