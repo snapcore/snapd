@@ -463,11 +463,24 @@ dbus (receive, send)
     interface=org.freedesktop.DBus.Properties
     peer=(label=unconfined),
 
-# Allow access to the regular xdg-desktop-portal APIs
+# Allow access and introspection to the regular xdg-desktop-portal APIs
 dbus (send)
     bus=session
     interface=org.freedesktop.portal.*
     path=/org/freedesktop/portal/desktop{,/**}
+    peer=(label=unconfined),
+dbus (send)
+    bus=session
+    interface=org.freedesktop.DBus.Properties
+    path=/org/freedesktop/portal/desktop{,/**}
+    peer=(label=unconfined),
+
+# Allow to receive settings change notifications from xdg-desktop-portal
+dbus (receive)
+    bus=session
+    interface=org.freedesktop.portal.Settings
+    path=/org/freedesktop/portal/desktop
+    member=SettingChanged
     peer=(label=unconfined),
 
 # Allow access to various paths gnome-session and gnome-shell need.
