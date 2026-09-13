@@ -31,7 +31,8 @@
 //     overlord/auth, so it cannot import them back. Event types here must
 //     not embed those packages' types; callers in such packages still
 //     translate (e.g. [auth.UserState] → [SnapdUser],
-//     [restart.DaemonRestartReason] → [SystemRestartReason]). Conversion helpers
+//     [restart.DaemonRestartReason] → [SystemRestartReason],
+//     [restart.StandbyReason] → [SystemStandbyReason]). Conversion helpers
 //     may import utility packages (osutil, asserts) that will never need
 //     to log.
 //
@@ -275,6 +276,18 @@ const (
 	// SystemRestartApparmorPromptingDisable is used when
 	// experimental.apparmor-prompting is turned off.
 	SystemRestartApparmorPromptingDisable SystemRestartReason = "apparmor-prompting-disable"
+)
+
+// SystemStandbyReason identifies why snapd entered socket-activation
+// standby. It is passed to [LogSystemStandby] as reason and emitted as
+// reason on sys_standby events. Callers convert from
+// [restart.StandbyReason] at emit time.
+type SystemStandbyReason string
+
+const (
+	// SystemStandbyIdle is used when snapd goes into socket activation
+	// because it is idle.
+	SystemStandbyIdle SystemStandbyReason = "idle"
 )
 
 // String returns a colon-separated description of the user in the form

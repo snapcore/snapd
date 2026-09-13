@@ -786,7 +786,7 @@ func (s *daemonSuite) TestRestartDaemonAfterSocketStandby(c *check.C) {
 
 	st := d.overlord.State()
 	st.Lock()
-	restart.Request(st, restart.RestartSocket, nil)
+	restart.RequestSocket(st, restart.StandbyIdle)
 	restart.RequestDaemon(st, restart.DaemonRestartSnapdUpdate)
 	st.Unlock()
 
@@ -801,6 +801,7 @@ func (s *daemonSuite) TestRestartDaemonAfterSocketStandby(c *check.C) {
 
 	c.Check(seclogBuf.String(), testutil.Contains, "sys_restart")
 	c.Check(seclogBuf.String(), testutil.Contains, "Snapd restart: snapd-update")
+	c.Check(seclogBuf.String(), check.Not(testutil.Contains), "sys_standby")
 }
 
 func (s *daemonSuite) TestGracefulStop(c *check.C) {
@@ -1418,6 +1419,10 @@ func (s *daemonSuite) TestRestartExpectedRebootGiveUp(c *check.C) {
 }
 
 func (s *daemonSuite) TestRestartIntoSocketModeNoNewChanges(c *check.C) {
+	seclogBuf := &bytes.Buffer{}
+	seclog.Setup(seclogtest.MockSecurityLogger(seclogBuf))
+	defer seclog.Setup(seclog.NewNopLogger())
+
 	restore := standby.MockStandbyWait(5 * time.Millisecond)
 	defer restore()
 
@@ -1444,9 +1449,17 @@ func (s *daemonSuite) TestRestartIntoSocketModeNoNewChanges(c *check.C) {
 	err := d.Stop(nil)
 	c.Check(err, check.Equals, ErrRestartSocket)
 	c.Check(d.restartSocket, check.Equals, true)
+	c.Check(seclogBuf.String(), testutil.Contains, "sys_standby")
+	c.Check(seclogBuf.String(), testutil.Contains, "Snapd standby: idle")
+	c.Check(seclogBuf.String(), testutil.Contains, `[reason="idle"]`)
+	c.Check(seclogBuf.String(), check.Not(testutil.Contains), "sys_restart")
 }
 
 func (s *daemonSuite) TestRestartIntoSocketModePendingChanges(c *check.C) {
+	seclogBuf := &bytes.Buffer{}
+	seclog.Setup(seclogtest.MockSecurityLogger(seclogBuf))
+	defer seclog.Setup(seclog.NewNopLogger())
+
 	restore := standby.MockStandbyWait(5 * time.Millisecond)
 	defer restore()
 
@@ -1487,6 +1500,7 @@ func (s *daemonSuite) TestRestartIntoSocketModePendingChanges(c *check.C) {
 	err := d.Stop(nil)
 	c.Check(err, check.IsNil)
 	c.Check(d.restartSocket, check.Equals, false)
+	c.Check(seclogBuf.String(), check.Equals, "")
 }
 
 func (s *daemonSuite) TestConnTrackerCanShutdown(c *check.C) {

@@ -50,8 +50,9 @@ const (
 	RestartSystem
 	// RestartSystemNow is like RestartSystem but action is immediate
 	RestartSystemNow
-	// RestartSocket will restart the daemon so that it goes into
-	// socket activation mode.
+	// RestartSocket stops the daemon so that it goes into socket
+	// activation mode. New callers must use RequestSocket with a
+	// dedicated StandbyReason.
 	RestartSocket
 	// Stop just stops the daemon (used with image pre-seeding)
 	StopDaemon
@@ -152,6 +153,7 @@ type RestartManager struct {
 	bootID           string
 	changeCallbackID int
 	restartReason    DaemonRestartReason
+	standbyReason    StandbyReason
 }
 
 // Manager returns a new restart manager and initializes the support
@@ -384,15 +386,29 @@ const (
 	DaemonRestartApparmorPromptingDisable DaemonRestartReason = "apparmor-prompting-disable"
 )
 
+// StandbyReason identifies why socket-activation standby was requested.
+// Values are kebab-case and match the sys_standby reason attribute.
+type StandbyReason string
+
+const (
+	// StandbyIdle is used when snapd goes into socket activation
+	// because it is idle.
+	StandbyIdle StandbyReason = "idle"
+)
+
 // Request asks for a restart of the managing process.
 // The state needs to be locked to request a restart.
 //
 // Daemon restarts must be requested with RequestDaemon so a
-// DaemonRestartReason is recorded.
+// DaemonRestartReason is recorded. Socket standby must be requested
+// with RequestSocket so a StandbyReason is recorded.
 func Request(st *state.State, t RestartType, rebootInfo *boot.RebootInfo) {
 	rm := restartManager(st, "internal error: cannot request a restart before RestartManager initialization")
 	if t != RestartDaemon {
 		rm.restartReason = ""
+	}
+	if t != RestartSocket {
+		rm.standbyReason = ""
 	}
 	switch t {
 	case RestartSystem, RestartSystemNow, RestartSystemHaltNow, RestartSystemPoweroffNow:
@@ -410,6 +426,14 @@ func RequestDaemon(st *state.State, reason DaemonRestartReason) {
 	Request(st, RestartDaemon, nil)
 }
 
+// RequestSocket asks for socket-activation standby and records why.
+// The state needs to be locked to request standby.
+func RequestSocket(st *state.State, reason StandbyReason) {
+	rm := restartManager(st, "internal error: cannot request a restart before RestartManager initialization")
+	rm.standbyReason = reason
+	Request(st, RestartSocket, nil)
+}
+
 // PendingReason returns the reason recorded by RequestDaemon, or empty if no
 // daemon-restart reason was set. The state needs to be locked.
 func PendingReason(st *state.State) DaemonRestartReason {
@@ -418,6 +442,16 @@ func PendingReason(st *state.State) DaemonRestartReason {
 		return ""
 	}
 	return cached.(*RestartManager).restartReason
+}
+
+// PendingStandbyReason returns the reason recorded by RequestSocket, or empty
+// if no standby reason was set. The state needs to be locked.
+func PendingStandbyReason(st *state.State) StandbyReason {
+	cached := st.Cached(restartManagerKey{})
+	if cached == nil {
+		return ""
+	}
+	return cached.(*RestartManager).standbyReason
 }
 
 func setWaitForSystemRestart(chg *state.Change) {

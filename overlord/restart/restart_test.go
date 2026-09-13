@@ -175,6 +175,100 @@ func (s *restartSuite) TestPendingReasonNoManager(c *C) {
 	c.Check(restart.PendingReason(st), Equals, restart.DaemonRestartReason(""))
 }
 
+func (s *restartSuite) TestRequestSocketStoresReason(c *C) {
+	st := state.New(nil)
+
+	st.Lock()
+	defer st.Unlock()
+
+	h := &testHandler{}
+	_, err := restart.Manager(st, "boot-id-1", h)
+	c.Assert(err, IsNil)
+
+	c.Check(restart.PendingStandbyReason(st), Equals, restart.StandbyReason(""))
+
+	restart.RequestSocket(st, restart.StandbyIdle)
+
+	c.Check(h.restartRequested, Equals, true)
+	c.Check(restart.Pending(st), Equals, restart.RestartSocket)
+	c.Check(restart.PendingStandbyReason(st), Equals, restart.StandbyIdle)
+	c.Check(restart.PendingReason(st), Equals, restart.DaemonRestartReason(""))
+}
+
+func (s *restartSuite) TestRequestRestartSocketLeavesStandbyReasonEmpty(c *C) {
+	st := state.New(nil)
+
+	st.Lock()
+	defer st.Unlock()
+
+	_, err := restart.Manager(st, "boot-id-1", &testHandler{})
+	c.Assert(err, IsNil)
+
+	restart.Request(st, restart.RestartSocket, nil)
+	c.Check(restart.Pending(st), Equals, restart.RestartSocket)
+	c.Check(restart.PendingStandbyReason(st), Equals, restart.StandbyReason(""))
+}
+
+func (s *restartSuite) TestRequestDaemonClearsStandbyReason(c *C) {
+	st := state.New(nil)
+
+	st.Lock()
+	defer st.Unlock()
+
+	_, err := restart.Manager(st, "boot-id-1", &testHandler{})
+	c.Assert(err, IsNil)
+
+	restart.RequestSocket(st, restart.StandbyIdle)
+	c.Check(restart.PendingStandbyReason(st), Equals, restart.StandbyIdle)
+
+	restart.RequestDaemon(st, restart.DaemonRestartSnapdUpdate)
+	c.Check(restart.Pending(st), Equals, restart.RestartDaemon)
+	c.Check(restart.PendingStandbyReason(st), Equals, restart.StandbyReason(""))
+	c.Check(restart.PendingReason(st), Equals, restart.DaemonRestartSnapdUpdate)
+}
+
+func (s *restartSuite) TestRequestSocketClearsDaemonReason(c *C) {
+	st := state.New(nil)
+
+	st.Lock()
+	defer st.Unlock()
+
+	_, err := restart.Manager(st, "boot-id-1", &testHandler{})
+	c.Assert(err, IsNil)
+
+	restart.RequestDaemon(st, restart.DaemonRestartSnapdUpdate)
+	c.Check(restart.PendingReason(st), Equals, restart.DaemonRestartSnapdUpdate)
+
+	restart.RequestSocket(st, restart.StandbyIdle)
+	c.Check(restart.Pending(st), Equals, restart.RestartSocket)
+	c.Check(restart.PendingReason(st), Equals, restart.DaemonRestartReason(""))
+	c.Check(restart.PendingStandbyReason(st), Equals, restart.StandbyIdle)
+}
+
+func (s *restartSuite) TestRequestClearsStandbyReason(c *C) {
+	st := state.New(nil)
+
+	st.Lock()
+	defer st.Unlock()
+
+	_, err := restart.Manager(st, "boot-id-1", &testHandler{})
+	c.Assert(err, IsNil)
+
+	restart.RequestSocket(st, restart.StandbyIdle)
+	c.Check(restart.PendingStandbyReason(st), Equals, restart.StandbyIdle)
+
+	restart.Request(st, restart.RestartSystem, nil)
+	c.Check(restart.PendingStandbyReason(st), Equals, restart.StandbyReason(""))
+}
+
+func (s *restartSuite) TestPendingStandbyReasonNoManager(c *C) {
+	st := state.New(nil)
+	st.Lock()
+	defer st.Unlock()
+
+	c.Check(restart.PendingStandbyReason(st), Equals, restart.StandbyReason(""))
+}
+
 func (s *restartSuite) TestRequestRestartDaemonNoHandler(c *C) {
 	st := state.New(nil)
 

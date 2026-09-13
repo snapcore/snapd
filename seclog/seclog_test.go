@@ -229,6 +229,22 @@ func (s *SecLogSuite) TestLogSystemRestartUnknownReason(c *C) {
 	c.Check(s.buf.String(), testutil.Contains, `[reason="<unknown>"]`)
 }
 
+func (s *SecLogSuite) TestLogSystemStandby(c *C) {
+	seclog.LogSystemStandby(seclog.SystemStandbyIdle)
+
+	c.Check(s.buf.String(), testutil.Contains, "sys_standby")
+	c.Check(s.buf.String(), testutil.Contains, "Snapd standby: idle")
+	c.Check(s.buf.String(), testutil.Contains, `[reason="idle"]`)
+}
+
+func (s *SecLogSuite) TestLogSystemStandbyUnknownReason(c *C) {
+	seclog.LogSystemStandby("")
+
+	c.Check(s.buf.String(), testutil.Contains, "sys_standby")
+	c.Check(s.buf.String(), testutil.Contains, "Snapd standby: <unknown>")
+	c.Check(s.buf.String(), testutil.Contains, `[reason="<unknown>"]`)
+}
+
 func (s *SecLogSuite) TestLogUserCreated(c *C) {
 	user := seclog.SnapdUser{
 		ID:             1,

@@ -145,6 +145,23 @@ func LogSystemRestart(reason SystemRestartReason) {
 	)
 }
 
+// LogSystemStandby logs a completed socket-activation standby using the
+// global security logger.
+func LogSystemStandby(reason SystemStandbyReason) {
+	lock.Lock()
+	defer lock.Unlock()
+
+	if reason == "" {
+		reason = SystemStandbyReason(unknown)
+	}
+
+	globalLogger.LogEvent(
+		Event{Category: "SYS", Name: "sys_standby", Level: LevelInfo},
+		fmt.Sprintf("Snapd standby: %s", reason),
+		Attr{Key: "reason", Value: reason},
+	)
+}
+
 // LogLoginSuccess logs a successful login using the global security logger.
 func LogLoginSuccess(user SnapdUser) {
 	lock.Lock()

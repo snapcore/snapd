@@ -773,7 +773,8 @@ func (d *Daemon) Stop(sigCh chan<- os.Signal) error {
 				logger.Noticef("WARNING: cannot stop daemon: %v", err)
 			} else {
 				// Wait failed: this is an aborted shutdown, not a
-				// completed controlled restart, so do not emit sys_restart.
+				// completed controlled restart or standby, so do
+				// not emit sys_restart or sys_standby.
 				return err
 			}
 		}
@@ -804,6 +805,11 @@ func (d *Daemon) Stop(sigCh chan<- os.Signal) error {
 	}
 
 	if d.restartSocket {
+		d.state.Lock()
+		reason := restart.PendingStandbyReason(d.state)
+		d.state.Unlock()
+		seclog.LogSystemStandby(seclog.SystemStandbyReason(reason))
+		logger.Noticef("entering standby (%s)", reason)
 		return ErrRestartSocket
 	}
 

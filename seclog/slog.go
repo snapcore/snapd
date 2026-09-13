@@ -192,6 +192,12 @@ func (r SystemRestartReason) LogValue() slog.Value {
 	return slog.StringValue(string(r))
 }
 
+// LogValue implements [slog.LogValuer], allowing [SystemStandbyReason] to be
+// used directly as a structured log attribute value.
+func (r SystemStandbyReason) LogValue() slog.Value {
+	return slog.StringValue(string(r))
+}
+
 // LogValue implements [slog.LogValuer], allowing [SnapdUser] to be
 // used directly as a structured log attribute value.
 func (u SnapdUser) LogValue() slog.Value {
