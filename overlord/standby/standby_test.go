@@ -152,6 +152,9 @@ func (s *standbySuite) TestStartChecks(c *C) {
 	ch1 <- true
 	<-ch2
 	c.Check(n, Equals, 1)
+	s.state.Lock()
+	c.Check(restart.PendingStandbyReason(s.state), Equals, restart.StandbyIdle)
+	s.state.Unlock()
 	// no more opinions
 	close(ch1)
 

@@ -30,7 +30,9 @@
 //  2. Self-contained event types: seclog is imported by packages such as
 //     overlord/auth, so it cannot import them back. Event types here must
 //     not embed those packages' types; callers in such packages still
-//     translate (e.g. [auth.UserState] → [SnapdUser]). Conversion helpers
+//     translate (e.g. [auth.UserState] → [SnapdUser],
+//     [restart.DaemonRestartReason] → [SystemRestartReason],
+//     [restart.StandbyReason] → [SystemStandbyReason]). Conversion helpers
 //     may import utility packages (osutil, asserts) that will never need
 //     to log.
 //
@@ -250,6 +252,42 @@ const (
 	DenialUserAuth             DenialReason = "user-auth-denied"
 	DenialRootAuth             DenialReason = "root-auth-denied"
 	DenialPolkitAuth           DenialReason = "polkit-auth-denied"
+)
+
+// SystemRestartReason identifies why a controlled snapd daemon restart
+// was requested. It is passed to [LogSystemRestart] as reason and
+// emitted as reason on sys_restart events. Callers convert from
+// [restart.DaemonRestartReason] at emit time.
+type SystemRestartReason string
+
+const (
+	// SystemRestartSnapdUpdate is used after a snapd (or classic
+	// core/os) install or refresh.
+	SystemRestartSnapdUpdate SystemRestartReason = "snapd-update"
+	// SystemRestartSnapdRevert is used for an explicit snap revert of
+	// snapd (or classic core/os).
+	SystemRestartSnapdRevert SystemRestartReason = "snapd-revert"
+	// SystemRestartSnapdUndo is used when a snapd (or classic core/os)
+	// binary change is undone.
+	SystemRestartSnapdUndo SystemRestartReason = "snapd-undo"
+	// SystemRestartApparmorPromptingEnable is used when
+	// experimental.apparmor-prompting is turned on.
+	SystemRestartApparmorPromptingEnable SystemRestartReason = "apparmor-prompting-enable"
+	// SystemRestartApparmorPromptingDisable is used when
+	// experimental.apparmor-prompting is turned off.
+	SystemRestartApparmorPromptingDisable SystemRestartReason = "apparmor-prompting-disable"
+)
+
+// SystemStandbyReason identifies why snapd entered socket-activation
+// standby. It is passed to [LogSystemStandby] as reason and emitted as
+// reason on sys_standby events. Callers convert from
+// [restart.StandbyReason] at emit time.
+type SystemStandbyReason string
+
+const (
+	// SystemStandbyIdle is used when snapd goes into socket activation
+	// because it is idle.
+	SystemStandbyIdle SystemStandbyReason = "idle"
 )
 
 // String returns a colon-separated description of the user in the form

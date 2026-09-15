@@ -205,6 +205,46 @@ func (s *SecLogSuite) TestLogLoggerDisabledNopSkipsNoticef(c *C) {
 	c.Check(logBuf.String(), Not(testutil.Contains), "security logger disabled")
 }
 
+func (s *SecLogSuite) TestLogSystemRestart(c *C) {
+	seclog.LogSystemRestart(seclog.SystemRestartSnapdUpdate)
+
+	c.Check(s.buf.String(), testutil.Contains, "sys_restart")
+	c.Check(s.buf.String(), testutil.Contains, "Snapd restart: snapd-update")
+	c.Check(s.buf.String(), testutil.Contains, `[reason="snapd-update"]`)
+}
+
+func (s *SecLogSuite) TestLogSystemRestartUndo(c *C) {
+	seclog.LogSystemRestart(seclog.SystemRestartSnapdUndo)
+
+	c.Check(s.buf.String(), testutil.Contains, "sys_restart")
+	c.Check(s.buf.String(), testutil.Contains, "Snapd restart: snapd-undo")
+	c.Check(s.buf.String(), testutil.Contains, `[reason="snapd-undo"]`)
+}
+
+func (s *SecLogSuite) TestLogSystemRestartUnknownReason(c *C) {
+	seclog.LogSystemRestart("")
+
+	c.Check(s.buf.String(), testutil.Contains, "sys_restart")
+	c.Check(s.buf.String(), testutil.Contains, "Snapd restart: <unknown>")
+	c.Check(s.buf.String(), testutil.Contains, `[reason="<unknown>"]`)
+}
+
+func (s *SecLogSuite) TestLogSystemStandby(c *C) {
+	seclog.LogSystemStandby(seclog.SystemStandbyIdle)
+
+	c.Check(s.buf.String(), testutil.Contains, "sys_standby")
+	c.Check(s.buf.String(), testutil.Contains, "Snapd standby: idle")
+	c.Check(s.buf.String(), testutil.Contains, `[reason="idle"]`)
+}
+
+func (s *SecLogSuite) TestLogSystemStandbyUnknownReason(c *C) {
+	seclog.LogSystemStandby("")
+
+	c.Check(s.buf.String(), testutil.Contains, "sys_standby")
+	c.Check(s.buf.String(), testutil.Contains, "Snapd standby: <unknown>")
+	c.Check(s.buf.String(), testutil.Contains, `[reason="<unknown>"]`)
+}
+
 func (s *SecLogSuite) TestLogUserCreated(c *C) {
 	user := seclog.SnapdUser{
 		ID:             1,

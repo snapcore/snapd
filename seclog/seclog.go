@@ -128,6 +128,40 @@ func LogLoggerDisabled() {
 	)
 }
 
+// LogSystemRestart logs a controlled snapd daemon restart using the
+// global security logger.
+func LogSystemRestart(reason SystemRestartReason) {
+	lock.Lock()
+	defer lock.Unlock()
+
+	if reason == "" {
+		reason = SystemRestartReason(unknown)
+	}
+
+	globalLogger.LogEvent(
+		Event{Category: "SYS", Name: "sys_restart", Level: LevelInfo},
+		fmt.Sprintf("Snapd restart: %s", reason),
+		Attr{Key: "reason", Value: reason},
+	)
+}
+
+// LogSystemStandby logs a completed socket-activation standby using the
+// global security logger.
+func LogSystemStandby(reason SystemStandbyReason) {
+	lock.Lock()
+	defer lock.Unlock()
+
+	if reason == "" {
+		reason = SystemStandbyReason(unknown)
+	}
+
+	globalLogger.LogEvent(
+		Event{Category: "SYS", Name: "sys_standby", Level: LevelInfo},
+		fmt.Sprintf("Snapd standby: %s", reason),
+		Attr{Key: "reason", Value: reason},
+	)
+}
+
 // LogLoginSuccess logs a successful login using the global security logger.
 func LogLoginSuccess(user SnapdUser) {
 	lock.Lock()
