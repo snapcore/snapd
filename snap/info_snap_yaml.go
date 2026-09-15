@@ -74,11 +74,11 @@ const snapdInfoKey = "snapd-info"
 
 func (y *snapdInfoYaml) UnmarshalYAML(unmarshal func(any) error) error {
 	type plain snapdInfoYaml
+	y.UbuntuCoreTracks = UbuntuCoreTracks{}
 	var parsed plain
 	if err := unmarshal(&parsed); err != nil {
 		return err
 	}
-	y.UbuntuCoreTracks = UbuntuCoreTracks{}
 	if parsed.UbuntuCoreTracks != nil {
 		y.UbuntuCoreTracks = parsed.UbuntuCoreTracks
 	}

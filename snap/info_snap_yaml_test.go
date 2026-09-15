@@ -2581,6 +2581,16 @@ snapd-info:
 	c.Check(err, ErrorMatches, `invalid ubuntu-core-tracks: empty track map for boot base 18`)
 }
 
+func (s *YamlSuite) TestUnmarshalUbuntuCoreTracksRejectsScalarValue(c *C) {
+	_, err := snap.InfoFromSnapYaml([]byte(`
+name: snapd
+version: 1.0
+snapd-info:
+  ubuntu-core-tracks: nil
+`))
+	c.Assert(err, ErrorMatches, `(?s)cannot parse snap.yaml: yaml: unmarshal errors:.*cannot unmarshal !!str `+"`nil`"+` into snap.UbuntuCoreTracks`)
+}
+
 func (s *YamlSuite) TestUnmarshalSnapdInfoRejectedOnApp(c *C) {
 	for _, yaml := range []string{
 		`
