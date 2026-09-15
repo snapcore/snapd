@@ -44,6 +44,18 @@ const (
 	jsonBody
 )
 
+// TypeDefinition contains the information needed to define an assertion type.
+type TypeDefinition struct {
+	// Name is the process-wide unique assertion type name.
+	Name string
+	// PrimaryKey lists the headers that uniquely identify an assertion.
+	PrimaryKey []string
+	// Assembler validates and constructs the concrete assertion.
+	Assembler func(assert AssertionBase) (Assertion, error)
+	// Force keyed literals so fields can be added compatibly.
+	_ struct{}
+}
+
 // MetaHeaders is a list of headers in assertions which are about the assertion
 // itself.
 var MetaHeaders = [...]string{
@@ -73,7 +85,7 @@ type AssertionType struct {
 	// forming types.
 	OptionalPrimaryKeyDefaults map[string]string
 
-	assembler func(assert assertionBase) (Assertion, error)
+	assembler func(assert AssertionBase) (Assertion, error)
 	flags     typeFlags
 }
 
@@ -96,6 +108,48 @@ func (at *AssertionType) validate() {
 	if len(at.OptionalPrimaryKeyDefaults) != noptional {
 		panic(fmt.Sprintf("assertion type %q has defaults values for unknown primary key headers", at.Name))
 	}
+}
+
+func (at *AssertionType) validateForRegistration() error {
+	if at.Name == "" {
+		return fmt.Errorf("assertion type name cannot be empty")
+	}
+	if !headerNameValidity.MatchString(at.Name) {
+		return fmt.Errorf("invalid assertion type name: %q", at.Name)
+	}
+	if at.assembler == nil {
+		return fmt.Errorf("assertion type %q assembler cannot be nil", at.Name)
+	}
+	primaryKeys := make(map[string]bool, len(at.PrimaryKey))
+	for _, name := range at.PrimaryKey {
+		if !headerNameValidity.MatchString(name) {
+			return fmt.Errorf("assertion type %q has invalid primary key header name %q", at.Name, name)
+		}
+		if primaryKeys[name] {
+			return fmt.Errorf("assertion type %q has duplicate primary key header %q", at.Name, name)
+		}
+		primaryKeys[name] = true
+		for _, metaHeader := range MetaHeaders {
+			if name == metaHeader {
+				return fmt.Errorf("assertion type %q cannot use meta header %q as primary key", at.Name, name)
+			}
+		}
+	}
+	return nil
+}
+
+// NewAssertionType creates an assertion type from def. The returned type must
+// not be mutated.
+func NewAssertionType(def TypeDefinition) (*AssertionType, error) {
+	at := &AssertionType{
+		Name:       def.Name,
+		PrimaryKey: append([]string(nil), def.PrimaryKey...),
+		assembler:  def.Assembler,
+	}
+	if err := at.validateForRegistration(); err != nil {
+		return nil, err
+	}
+	return at, nil
 }
 
 // MaxSupportedFormat returns the maximum supported format iteration for the type.
@@ -211,7 +265,10 @@ func TypeNames() []string {
 	return names
 }
 
-var maxSupportedFormat = map[string]int{}
+var (
+	registryConfigured bool
+	maxSupportedFormat = map[string]int{}
+)
 
 func init() {
 	// register maxSupportedFormats while breaking initialisation loop
@@ -235,6 +292,41 @@ func init() {
 	for _, at := range typeRegistry {
 		at.validate()
 	}
+}
+
+// ConfigureExternalTypes extends the process-wide set of assertion types. It must be
+// called during application initialization and complete before concurrent
+// assertion processing can encounter the additional types. A non-empty
+// configuration can be successfully applied only once. Empty calls are no-ops.
+// Failed calls leave the active set unchanged and may be retried. Assertion
+// types must not be mutated after a successful non-empty call.
+func ConfigureExternalTypes(assertionTypes ...*AssertionType) error {
+	if len(assertionTypes) == 0 {
+		return nil
+	}
+	if registryConfigured {
+		return fmt.Errorf("assertion types are already configured")
+	}
+
+	types := make(map[string]*AssertionType, len(typeRegistry)+len(assertionTypes))
+	for name, assertionType := range typeRegistry {
+		types[name] = assertionType
+	}
+	for _, assertionType := range assertionTypes {
+		if assertionType == nil {
+			return fmt.Errorf("cannot configure assertion types: assertion type cannot be nil")
+		}
+		if err := assertionType.validateForRegistration(); err != nil {
+			return fmt.Errorf("cannot configure assertion types: %v", err)
+		}
+		if _, ok := types[assertionType.Name]; ok {
+			return fmt.Errorf("cannot configure assertion types: assertion type %q is already registered", assertionType.Name)
+		}
+		types[assertionType.Name] = assertionType
+	}
+	typeRegistry = types
+	registryConfigured = true
+	return nil
 }
 
 func MockMaxSupportedFormat(assertType *AssertionType, maxFormat int) (restore func()) {
@@ -588,8 +680,8 @@ type customSigner interface {
 // MediaType is the media type for encoded assertions on the wire.
 const MediaType = "application/x.ubuntu.assertion"
 
-// assertionBase is the concrete base to hold representation data for actual assertions.
-type assertionBase struct {
+// AssertionBase holds the common representation shared by assertion types.
+type AssertionBase struct {
 	headers map[string]any
 	body    []byte
 	// parsed format iteration
@@ -603,40 +695,40 @@ type assertionBase struct {
 }
 
 // HeaderString retrieves the string value of header with name or ""
-func (ab *assertionBase) HeaderString(name string) string {
+func (ab *AssertionBase) HeaderString(name string) string {
 	s, _ := ab.headers[name].(string)
 	return s
 }
 
 // Type returns the assertion type.
-func (ab *assertionBase) Type() *AssertionType {
+func (ab *AssertionBase) Type() *AssertionType {
 	return Type(ab.HeaderString("type"))
 }
 
 // Format returns the assertion format iteration.
-func (ab *assertionBase) Format() int {
+func (ab *AssertionBase) Format() int {
 	return ab.format
 }
 
 // SupportedFormat returns whether the assertion uses a supported
 // format iteration. If false the assertion might have been only
 // partially parsed.
-func (ab *assertionBase) SupportedFormat() bool {
+func (ab *AssertionBase) SupportedFormat() bool {
 	return ab.format <= maxSupportedFormat[ab.HeaderString("type")]
 }
 
 // Revision returns the assertion revision.
-func (ab *assertionBase) Revision() int {
+func (ab *AssertionBase) Revision() int {
 	return ab.revision
 }
 
 // AuthorityID returns the authority-id a.k.a the authority responsible for the assertion.
-func (ab *assertionBase) AuthorityID() string {
+func (ab *AssertionBase) AuthorityID() string {
 	return ab.HeaderString("authority-id")
 }
 
 // Header returns the value of an header by name.
-func (ab *assertionBase) Header(name string) any {
+func (ab *AssertionBase) Header(name string) any {
 	v := ab.headers[name]
 	if v == nil {
 		return nil
@@ -645,32 +737,32 @@ func (ab *assertionBase) Header(name string) any {
 }
 
 // Headers returns the complete headers.
-func (ab *assertionBase) Headers() map[string]any {
+func (ab *AssertionBase) Headers() map[string]any {
 	return copyHeaders(ab.headers)
 }
 
 // Body returns the body of the assertion.
-func (ab *assertionBase) Body() []byte {
+func (ab *AssertionBase) Body() []byte {
 	return ab.body
 }
 
 // Signature returns the signed content and its unprocessed signature.
-func (ab *assertionBase) Signature() (content, signature []byte) {
+func (ab *AssertionBase) Signature() (content, signature []byte) {
 	return ab.content, ab.signature
 }
 
 // SignKeyID returns the key id for the key that signed this assertion.
-func (ab *assertionBase) SignKeyID() string {
+func (ab *AssertionBase) SignKeyID() string {
 	return ab.HeaderString("sign-key-sha3-384")
 }
 
 // Prerequisites returns references to the prerequisite assertions for the validity of this one.
-func (ab *assertionBase) Prerequisites() []*Ref {
+func (ab *AssertionBase) Prerequisites() []*Ref {
 	return nil
 }
 
 // Ref returns a reference representing this assertion.
-func (ab *assertionBase) Ref() *Ref {
+func (ab *AssertionBase) Ref() *Ref {
 	assertType := ab.Type()
 	primKey := make([]string, len(assertType.PrimaryKey))
 	for i, name := range assertType.PrimaryKey {
@@ -683,12 +775,12 @@ func (ab *assertionBase) Ref() *Ref {
 }
 
 // At returns an AtRevision referencing this assertion at its revision.
-func (ab *assertionBase) At() *AtRevision {
+func (ab *AssertionBase) At() *AtRevision {
 	return &AtRevision{Ref: *ab.Ref(), Revision: ab.Revision()}
 }
 
 // expected interface is implemented
-var _ Assertion = (*assertionBase)(nil)
+var _ Assertion = (*AssertionBase)(nil)
 
 // Decode parses a serialized assertion.
 //
@@ -1113,7 +1205,7 @@ func assemble(headers map[string]any, body, content, signature []byte) (Assertio
 		return nil, fmt.Errorf("empty assertion signature")
 	}
 
-	assert, err := assertType.assembler(assertionBase{
+	assert, err := assertType.assembler(AssertionBase{
 		headers:   headers,
 		body:      body,
 		format:    formatnum,
@@ -1281,7 +1373,7 @@ func assembleAndSign(assertType *AssertionType, headers map[string]any, body []b
 	// be 'cat' friendly, add a ignored newline to the signature which is the last part of the encoded assertion
 	signature = append(signature, '\n')
 
-	assert, err := assertType.assembler(assertionBase{
+	assert, err := assertType.assembler(AssertionBase{
 		headers:   finalHeaders,
 		body:      finalBody,
 		format:    formatnum,
