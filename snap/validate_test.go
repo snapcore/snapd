@@ -2940,6 +2940,9 @@ name: foo
 version: 1.0
 `))
 	c.Assert(err, IsNil)
+	info.UbuntuCoreTracks = UbuntuCoreTracks{}
+	c.Check(Validate(info), ErrorMatches, `cannot specify snapd-info except on the snapd snap`)
+
 	info.UbuntuCoreTracks = UbuntuCoreTracks{
 		"18": {"latest": "18"},
 	}

@@ -64,6 +64,23 @@ type snapYaml struct {
 	TypoLayouts typoDetector `yaml:"layouts,omitempty"`
 }
 
+func (y *snapYaml) UnmarshalYAML(unmarshal func(any) error) error {
+	type plain snapYaml
+	var parsed plain
+	if err := unmarshal(&parsed); err != nil {
+		return err
+	}
+	var doc map[string]any
+	if err := unmarshal(&doc); err != nil {
+		return err
+	}
+	if _, ok := doc[snapdInfoKey]; ok && parsed.SnapdInfo.UbuntuCoreTracks == nil {
+		parsed.SnapdInfo.UbuntuCoreTracks = UbuntuCoreTracks{}
+	}
+	*y = snapYaml(parsed)
+	return nil
+}
+
 // snapdInfoYaml is metadata that may only appear in the snapd snap. Unknown
 // keys alongside ubuntu-core-tracks are ignored, so the envelope can grow.
 type snapdInfoYaml struct {
@@ -198,9 +215,6 @@ func infoFromSnapYaml(yamlData []byte, strk *scopedTracker) (*Info, error) {
 	}
 
 	snap := infoSkeletonFromSnapYaml(y)
-	if snap.Type() != TypeSnapd && hasSnapdInfoKey(yamlData) {
-		return nil, errSnapdInfoNotSnapd
-	}
 
 	// Collect top-level definitions of plugs and slots
 	if err := setPlugsFromSnapYaml(y, snap); err != nil {
@@ -674,19 +688,6 @@ func setLinksFromSnapYaml(y snapYaml, snap *Info) error {
 		snap.OriginalLinks[linksKey] = links
 	}
 	return nil
-}
-
-// hasSnapdInfoKey reports whether snap.yaml has a top-level snapd-info key,
-// whatever its value. A struct field cannot tell an explicit null from an
-// omitted key, but a map keeps the key.
-func hasSnapdInfoKey(yamlData []byte) bool {
-	var doc map[string]any
-	if err := yaml.Unmarshal(yamlData, &doc); err != nil {
-		// unreachable: the typed unmarshal above already succeeded
-		return false
-	}
-	_, ok := doc[snapdInfoKey]
-	return ok
 }
 
 func setUbuntuCoreTracks(y snapYaml, snap *Info) error {

@@ -558,10 +558,10 @@ func Validate(info *Info) error {
 	return ValidateLayoutAll(info)
 }
 
-// validateUbuntuCoreTracks checks track maps. A non-empty map is only valid on the
-// snapd snap; an empty or nil map is valid on any type.
+// validateUbuntuCoreTracks checks track maps. A present map is only valid on the
+// snapd snap; nil means the stanza was omitted.
 func validateUbuntuCoreTracks(tracks UbuntuCoreTracks, typ Type) error {
-	if len(tracks) != 0 && typ != TypeSnapd {
+	if tracks != nil && typ != TypeSnapd {
 		return errSnapdInfoNotSnapd
 	}
 	for bootBase, redirects := range tracks {
